@@ -53,8 +53,10 @@ print("ResolveAI Voice Engine")
 print("================================")
 print("Loading multilingual Whisper model...")
 
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
+
 whisper_model = WhisperModel(
-    "small",
+    WHISPER_MODEL_SIZE,
     device="cpu",
     compute_type="int8",
 )
@@ -69,6 +71,11 @@ print("Whisper model loaded successfully.")
 app = FastAPI(
     title="ResolveAI Backend"
 )
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "service": "ResolveAI Backend"}
 
 
 # ============================================================
