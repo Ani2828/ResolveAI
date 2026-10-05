@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+openai
+python-dotenv
+python-multipart
+httpx
+faster-whisper==1.2.1
+av<19
