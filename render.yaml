@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: resolveai-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: SWIGGY_CLIENT_ID
+        sync: false
+      - key: SWIGGY_REDIRECT_URI
+        sync: false
+      - key: SWIGGY_FRONTEND_URL
+        sync: false
+      - key: WHISPER_MODEL_SIZE
+        value: tiny
+
+  - type: web
+    runtime: static
+    name: resolveai-frontend
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
