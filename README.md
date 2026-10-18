@@ -4,7 +4,7 @@
 
 ResolveAI is a multilingual, voice-first complaint-resolution assistant designed for low-digital-literacy users. Instead of forcing users to navigate complicated help flows, it lets them explain what happened naturally by speaking or typing.
 
-The system combines speech-to-text, structured complaint understanding, real platform data, and guided resolution workflows.
+The system combines speech-to-text, structured complaint understanding, account-scoped complaint history, and guided resolution workflows. Swiggy order data is available only after Swiggy authorization and partner access are enabled.
 
 ## Why ResolveAI
 
@@ -19,12 +19,11 @@ ResolveAI reduces that interaction cost:
 - **Voice-first complaints** using local Faster-Whisper transcription, with optional Gnani Prisma STT and Timbre TTS.
 - **Automatic language detection** with support for English, Hindi, Hinglish, Kannada and other languages handled by the AI layer.
 - **AI complaint understanding** for platform, issue, product, requested action, order reference, confidence and clarification needs.
-- **Real Swiggy integration** using OAuth 2.1 + PKCE and Swiggy MCP.
-- **Real order retrieval and matching** against the connected Swiggy account.
-- **Order-history verification** before showing an order-specific resolution workflow.
+- **Swiggy integration path** using OAuth 2.1 + PKCE and Swiggy MCP; live order access requires Swiggy partner approval and an authorized account.
+- **Order retrieval and matching** against a connected Swiggy account when that access is enabled.
+- **Order-history verification** before showing an order-specific resolution workflow; ResolveAI does not invent order details or claim a refund was issued.
 - **Multilingual UI adaptation** based on the language detected from the user's input.
-- **Complaint history and solved-problem views** stored locally in the browser for the current MVP.
-- **Account sign-in and private complaint history** using Supabase Auth and owner-scoped Postgres row-level security.
+- **Account sign-in and private complaint history** using Supabase Auth and owner-scoped Postgres row-level security, with a browser-local continuity copy.
 - **In-app settings** for profile information, themes and custom wallpaper.
 - **Mobile-first interface** designed around simple, low-friction interactions.
 
@@ -48,8 +47,8 @@ ResolveAI reduces that interaction cost:
              │
              ▼
 ┌──────────────────────────┐
-│   Real Swiggy Account    │
-│ Orders / Addresses       │
+│   Swiggy MCP (optional)  │
+│ Partner access required  │
 └──────────────────────────┘
 ```
 
@@ -59,7 +58,7 @@ ResolveAI reduces that interaction cost:
 2. Voice input is transcribed locally with Faster-Whisper by default, or with Gnani Prisma when explicitly enabled on the backend.
 3. The complaint is sent to the FastAPI analysis endpoint.
 4. The AI extracts structured fields such as language, platform, issue, product and requested action.
-5. When Swiggy is connected, the application retrieves real order history and searches for a safe match.
+5. When Swiggy access is approved and an account is connected, the application retrieves that account's order history and searches for a safe match.
 6. The UI presents the verified order context and the next supported resolution step.
 
 ## Technology stack
@@ -162,7 +161,7 @@ Create a local `.env` from `.env.example` and add your own credentials.
 
 6. Add the matching Supabase URL and anon key as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` on the frontend host. Add the Supabase URL, server-only service role key and encryption key to the backend host. `render.yaml` declares these variables so Render prompts for values at deploy time.
 
-Complaint history is stored in Postgres under the signed-in user's ID and protected by row-level security. The browser also keeps an account-scoped local copy for offline continuity. Swiggy access tokens and OAuth PKCE state are encrypted in Postgres and accessible only to the backend service role. Rotating the encryption key without re-encrypting stored values will require users to reconnect Swiggy.
+Complaint history is stored in Postgres under the signed-in user's ID and protected by row-level security. The browser also keeps an account-scoped local copy for continuity. Swiggy access tokens and OAuth PKCE state are encrypted in Postgres and accessible only to the backend service role. Rotating the encryption key without re-encrypting stored values will require users to reconnect Swiggy.
 
 The backend also applies per-account request limits to complaint analysis, voice, and order retrieval. These limits are in-process safeguards; configure a shared gateway/WAF rate limit before running multiple backend instances.
 
@@ -223,9 +222,9 @@ The integration expects an account-enabled Gnani API key. Live provider behavior
 
 ## Swiggy integration
 
-ResolveAI uses Swiggy's MCP interface to connect an authorized Swiggy account and retrieve real food-order data.
+ResolveAI has an OAuth + MCP integration path for connecting an authorized Swiggy account and retrieving food-order data. **Live Swiggy data is not available to a demo until Swiggy has approved the app's access and the user has authorized an account.** The deployed callback is configured in Render; the callback URL alone does not grant partner access.
 
-The current integration supports the connected-account workflow for:
+When partner access is enabled, the connected-account workflow supports:
 
 - OAuth authorization
 - Saved-address retrieval
@@ -239,7 +238,7 @@ The application deliberately does **not** claim that every complaint can be reso
 
 This hackathon MVP intentionally keeps the architecture lightweight.
 
-- Complaint history is stored in browser `localStorage` rather than a cloud database.
+- Complaint history is stored in Supabase Postgres for the signed-in owner and mirrored in account-scoped browser `localStorage` for continuity.
 - User profile preferences are stored locally.
 - API credentials stay in local environment variables.
 - Swiggy account access is handled through the OAuth flow rather than hard-coded credentials.
@@ -247,10 +246,14 @@ This hackathon MVP intentionally keeps the architecture lightweight.
 
 ## Current MVP limitations
 
-- There is no cloud database or multi-user authentication yet.
-- Browser-local history is device/browser specific.
+- Live Swiggy order retrieval requires partner approval, redirect URI allowlisting, and user authorization; it may not be available in a hackathon or internship demo.
+- The browser-local continuity copy is device/browser specific; Supabase is the account-backed history source.
 - Some resolution types require the platform's own support workflow rather than a direct API action.
 - Production deployment requires appropriate platform credentials, redirect-URI configuration and external-service review.
+
+## Demo and presentation
+
+Follow the honest, five-minute walkthrough in [`docs/DEMO.md`](docs/DEMO.md). Until Swiggy partner access is approved, describe the deployed experience as an AI complaint-analysis demo with private complaint history; label the complaint text as sample input and do not present order data as live.
 
 ## Hackathon context
 

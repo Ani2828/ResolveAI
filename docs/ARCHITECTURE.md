@@ -89,15 +89,16 @@ The user can correct the transcript before submitting the complaint to the analy
 
 ## Persistence
 
-The current MVP uses browser-local persistence for:
+The current MVP stores signed-in complaint history in Supabase Postgres, protected by row-level security. It mirrors complaint history in account-scoped browser storage for continuity. Profile preferences remain browser-local. Swiggy OAuth tokens and temporary authorization state are encrypted in Postgres and accessed only by the backend service role.
 
-- complaint history
+The browser-local copy supports:
+
 - solved-problem status
 - profile preferences
 - theme selection
 - wallpaper
 
-No cloud database is required for the current prototype.
+Live Swiggy order retrieval additionally requires Swiggy partner approval, callback allowlisting, and user authorization. Without those prerequisites the app can still demonstrate complaint analysis and account-scoped history, but it cannot verify a real Swiggy order.
 
 
 ## Optional Gnani speech services
