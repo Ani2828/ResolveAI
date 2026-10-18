@@ -1518,6 +1518,9 @@ function App() {
 
       );
 
+      const sttLanguage = uiLanguage === "hi" ? "hi-IN" : uiLanguage === "kn" ? "kn-IN" : "en-IN";
+      formData.append("language_code", sttLanguage);
+
 
 
       console.log("ResolveAI: uploading audio for transcription...");
