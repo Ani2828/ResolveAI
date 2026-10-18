@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { supabase, supabaseConfigured } from "./lib/supabase.js";
 
 
 
@@ -36,6 +37,107 @@ function applyResolveAITheme(theme, wallpaper='') {
 
 function App() {
   const [showSettings, setShowSettings] = useState(false);
+  const [authSession, setAuthSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(supabaseConfigured);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authNotice, setAuthNotice] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const accountId = authSession?.user?.id || "";
+  const previousAccountId = useRef(null);
+  const accountGeneration = useRef(0);
+  const discardRecordingRef = useRef(false);
+
+  function selectAccountData(session) {
+    const id = session?.user?.id;
+    const nextId = id || null;
+    if (previousAccountId.current !== nextId) {
+      previousAccountId.current = nextId;
+      accountGeneration.current += 1;
+      discardRecordingRef.current = true;
+      if (mediaRecorderRef.current?.state && mediaRecorderRef.current.state !== "inactive") {
+        try { mediaRecorderRef.current.stop(); } catch {}
+      }
+      micStreamRef.current?.getTracks().forEach((track) => track.stop());
+      micStreamRef.current = null;
+      audioChunksRef.current = [];
+      setMessages(initialMessages);
+      setInput("");
+      setAnalysis(null);
+      setResolutionResult(null);
+      setSelectedHelp(null);
+      setShowDetails(false);
+      setSwiggyConnected(false);
+      setSwiggyAddresses([]);
+      setSwiggyAddressId("");
+      setSwiggyOrders([]);
+      setSelectedSwiggyOrderId("");
+      setSelectedSwiggyOrderDetails(null);
+      setMatchedSwiggyOrder(null);
+      setOrderConfirmed(false);
+      setOrderMatchStatus("idle");
+      setLoading(false);
+      setListening(false);
+      setTranscribing(false);
+      setVoiceError("");
+      setSwiggyError("");
+      setSidebarPanel(null);
+    }
+    if (!id) {
+      setProblemHistory([]);
+      setUserProfile({ name: "", email: "", phone: "" });
+      return;
+    }
+    try {
+      setProblemHistory(JSON.parse(localStorage.getItem(`resolveai_problem_history:${id}`) || "[]"));
+      setUserProfile(JSON.parse(localStorage.getItem(`resolveai_profile:${id}`) || JSON.stringify({ name: "", email: session.user.email || "", phone: "" })));
+    } catch {
+      setProblemHistory([]);
+      setUserProfile({ name: "", email: session.user.email || "", phone: "" });
+    }
+  }
+
+  useEffect(() => {
+    if (!supabaseConfigured) return;
+    let alive = true;
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!alive) return;
+      if (error) setAuthNotice("Could not restore your session. Please sign in again.");
+      selectAccountData(data?.session || null);
+      setAuthSession(data?.session || null);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      selectAccountData(session);
+      setAuthSession(session);
+      setAuthLoading(false);
+      setAuthNotice("");
+    });
+    return () => { alive = false; subscription.unsubscribe(); };
+  }, []);
+
+  async function sendSignInLink(event) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthNotice("");
+    const { error } = await supabase.auth.signInWithOtp({
+      email: authEmail.trim(),
+      options: { emailRedirectTo: window.location.origin },
+    });
+    setAuthNotice(error ? "We couldn't send the sign-in link. Check your email and try again." : "Check your email for a secure sign-in link.");
+    setAuthBusy(false);
+  }
+
+  async function apiFetch(path, options = {}) {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data?.session?.access_token;
+    if (!accessToken || data.session.user.id !== accountId) throw new Error("Your session expired. Sign in again to continue.");
+    const requestAccountGeneration = accountGeneration.current;
+    const headers = new Headers(options.headers || {});
+    headers.set("Authorization", `Bearer ${accessToken}`);
+    const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    if (requestAccountGeneration !== accountGeneration.current) throw new Error("Your account changed. Please retry your request.");
+    return response;
+  }
 
 
   const callbackAuthResult = new URLSearchParams(window.location.search).get("swiggy");
@@ -61,11 +163,11 @@ function App() {
   const [voiceError, setVoiceError] = useState("");
   const [sidebarPanel, setSidebarPanel] = useState(null);
   const [problemHistory, setProblemHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("resolveai_problem_history") || "[]"); }
+    try { return JSON.parse(localStorage.getItem(`resolveai_problem_history:${accountId}`) || "[]"); }
     catch { return []; }
   });
   const [userProfile, setUserProfile] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("resolveai_profile") || '{"name":"","email":"","phone":""}'); }
+    try { return JSON.parse(localStorage.getItem(`resolveai_profile:${accountId}`) || '{"name":"","email":"","phone":""}'); }
     catch { return { name: "", email: "", phone: "" }; }
   });
 
@@ -425,7 +527,7 @@ function App() {
 
     try {
 
-      const response = await fetch(`${API_BASE}/api/swiggy/addresses`);
+      const response = await apiFetch(`/api/swiggy/addresses`);
 
       if (!response.ok) throw new Error(await readSwiggyError(response));
 
@@ -482,7 +584,7 @@ function App() {
 
 
 
-    fetch(`${API_BASE}/api/swiggy/status`)
+    apiFetch(`/api/swiggy/status`)
 
       .then((response) => response.json())
 
@@ -496,7 +598,7 @@ function App() {
 
       .catch(() => {});
 
-  }, [callbackAuthResult]);
+  }, [callbackAuthResult, accountId]);
 
 
 
@@ -508,7 +610,7 @@ function App() {
 
     try {
 
-      const response = await fetch(`${API_BASE}/api/swiggy/connect`, {
+      const response = await apiFetch(`/api/swiggy/connect`, {
 
         method: "POST",
 
@@ -545,7 +647,7 @@ function App() {
     setSwiggyOrdersLoaded(false);
 
     try {
-      const response = await fetch(`${API_BASE}/api/swiggy/orders`, {
+      const response = await apiFetch(`/api/swiggy/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address_id: addressId }),
@@ -758,11 +860,6 @@ function App() {
       analysisData
     );
 
-    console.log(
-      "ResolveAI Swiggy order matches:",
-      matches
-    );
-
     if (matches.length === 0) {
       setOrderMatchStatus("not_found");
       return;
@@ -807,7 +904,7 @@ function App() {
 
     try {
 
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE}/api/swiggy/order-details`,
         {
           method: "POST",
@@ -850,11 +947,6 @@ function App() {
         );
 
       } else {
-
-        console.warn(
-          "Swiggy order-details endpoint returned:",
-          response.status
-        );
 
       }
 
@@ -921,11 +1013,6 @@ function App() {
 
     } catch (error) {
 
-      console.error(
-        "ResolveAI Swiggy order verification error:",
-        error
-      );
-
       setSelectedSwiggyOrderDetails(null);
 
       const message =
@@ -961,7 +1048,7 @@ function App() {
 
     try {
 
-      await fetch(`${API_BASE}/api/swiggy/disconnect`, { method: "POST" });
+      await apiFetch(`/api/swiggy/disconnect`, { method: "POST" });
 
       setSwiggyConnected(false);
 
@@ -1006,7 +1093,7 @@ function App() {
 
   function openProblemHistory(type) {
     try {
-      const stored = JSON.parse(localStorage.getItem("resolveai_problem_history") || "[]");
+      const stored = JSON.parse(localStorage.getItem(`resolveai_problem_history:${accountId}`) || "[]");
       setProblemHistory(Array.isArray(stored) ? stored : []);
     } catch {
       setProblemHistory([]);
@@ -1018,17 +1105,59 @@ function App() {
 
   function saveProblemToHistory(record) {
     const next = [
-      { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ...record },
+      { id: crypto.randomUUID(), ...record },
       ...problemHistory,
     ].slice(0, 30);
     setProblemHistory(next);
-    localStorage.setItem("resolveai_problem_history", JSON.stringify(next));
+    localStorage.setItem(`resolveai_problem_history:${accountId}`, JSON.stringify(next));
+    const saved = next[0];
+    void supabase.from("resolveai_complaints").insert({
+      id: saved.id,
+      user_id: accountId,
+      complaint_text: saved.text,
+      language: saved.language,
+      platform: saved.platform,
+      issue: saved.issue,
+      requested_action: saved.action,
+      status: saved.status,
+      created_at: saved.createdAt,
+    }).then(({ error }) => {
+      if (!error) return;
+      // Keep the account-scoped local copy available when the database is temporarily offline.
+    });
   }
+
+  useEffect(() => {
+    if (!accountId) return;
+    let active = true;
+    supabase.from("resolveai_complaints")
+      .select("id, complaint_text, language, platform, issue, requested_action, status, created_at")
+      .eq("user_id", accountId)
+      .order("created_at", { ascending: false })
+      .limit(30)
+      .then(({ data, error }) => {
+        if (!active || error || !data) return;
+        const history = data.map((row) => ({
+          id: row.id,
+          text: row.complaint_text,
+          language: row.language,
+          platform: row.platform,
+          issue: row.issue,
+          action: row.requested_action,
+          status: row.status,
+          createdAt: row.created_at,
+        }));
+        setProblemHistory(history);
+        localStorage.setItem(`resolveai_problem_history:${accountId}`, JSON.stringify(history));
+      });
+    return () => { active = false; };
+  }, [accountId]);
 
   useEffect(() => {
     const syncPreferences = () => {
       try {
-        setUserProfile(JSON.parse(localStorage.getItem("resolveai_profile") || '{"name":"","email":"","phone":""}'));
+        setUserProfile(JSON.parse(localStorage.getItem(`resolveai_profile:${accountId}`) || '{"name":"","email":"","phone":""}'));
+        setProblemHistory(JSON.parse(localStorage.getItem(`resolveai_problem_history:${accountId}`) || "[]"));
         applyResolveAITheme(localStorage.getItem("resolveai_theme") || "light", localStorage.getItem("resolveai_wallpaper") || "");
       } catch {}
     };
@@ -1036,7 +1165,7 @@ function App() {
     window.addEventListener("storage", syncPreferences);
     window.addEventListener("resolveai-theme-change", syncPreferences);
     return () => { window.removeEventListener("storage", syncPreferences); window.removeEventListener("resolveai-theme-change", syncPreferences); };
-  }, []);
+  }, [accountId]);
 
   useEffect(() => {
     if (resolutionResult?.type !== "success" || !problemHistory.length) return;
@@ -1045,7 +1174,12 @@ function App() {
       index === 0 ? { ...item, status: "solved" } : item
     );
     setProblemHistory(updated);
-    localStorage.setItem("resolveai_problem_history", JSON.stringify(updated));
+    localStorage.setItem(`resolveai_problem_history:${accountId}`, JSON.stringify(updated));
+    const solvedComplaint = updated[0];
+    if (solvedComplaint?.id && accountId) {
+      void supabase.from("resolveai_complaints").update({ status: "solved" })
+        .eq("id", solvedComplaint.id).eq("user_id", accountId);
+    }
   }, [resolutionResult]);
 
   useEffect(() => {
@@ -1086,6 +1220,8 @@ function App() {
 
   async function sendMessage() {
 
+    const requestAccountGeneration = accountGeneration.current;
+
     const text = input.trim();
 
     if (
@@ -1122,7 +1258,7 @@ function App() {
 
     try {
 
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE}/api/analyze`,
         {
           method: "POST",
@@ -1162,16 +1298,12 @@ function App() {
 
       const data =
         await response.json();
+      if (requestAccountGeneration !== accountGeneration.current) return;
       const detectedUiLanguage = normalizeUiLanguage(data?.language);
       setUiLanguage(detectedUiLanguage);
       localStorage.setItem("resolveai_ui_language", detectedUiLanguage);
       localStorage.setItem("resolveai_ui_language", detectedUiLanguage);
 
-
-      console.log(
-        "ResolveAI AI response:",
-        data
-      );
 
       if (!data?.success) {
 
@@ -1433,11 +1565,6 @@ function App() {
 
     } catch (error) {
 
-      console.error(
-        "ResolveAI API error:",
-        error
-      );
-
       const errorMessage =
         error?.message ||
         "The ResolveAI backend could not process the request.";
@@ -1486,6 +1613,8 @@ function App() {
 
   async function transcribeAudio(audioBlob, mimeType) {
 
+    const requestAccountGeneration = accountGeneration.current;
+
     try {
 
       setTranscribing(true);
@@ -1523,11 +1652,9 @@ function App() {
 
 
 
-      console.log("ResolveAI: uploading audio for transcription...");
 
 
-
-      const response = await fetch(`${API_BASE}/api/transcribe`, {
+      const response = await apiFetch(`/api/transcribe`, {
 
         method: "POST",
 
@@ -1538,10 +1665,9 @@ function App() {
 
 
       const data = await response.json();
+      if (requestAccountGeneration !== accountGeneration.current) return;
 
 
-
-      console.log("ResolveAI transcription response:", data);
 
 
 
@@ -1584,8 +1710,6 @@ function App() {
       setInput(transcript);
 
     } catch (error) {
-
-      console.error("ResolveAI transcription error:", error);
 
       setVoiceError(
 
@@ -1697,8 +1821,6 @@ function App() {
 
       recorder.onerror = (event) => {
 
-        console.error("MediaRecorder error:", event);
-
         setVoiceError(
 
           "There was a problem recording your voice."
@@ -1741,6 +1863,11 @@ function App() {
 
         }
 
+        if (discardRecordingRef.current) {
+          discardRecordingRef.current = false;
+          return;
+        }
+
 
 
         if (audioBlob.size === 0) {
@@ -1765,6 +1892,8 @@ function App() {
 
       mediaRecorderRef.current = recorder;
 
+      discardRecordingRef.current = false;
+
       recorder.start();
 
 
@@ -1773,17 +1902,7 @@ function App() {
 
 
 
-      console.log(
-
-        "ResolveAI: recording started",
-
-        actualMimeTypeForLog(recorder, mimeType)
-
-      );
-
     } catch (error) {
-
-      console.error("ResolveAI microphone error:", error);
 
 
 
@@ -1841,14 +1960,6 @@ function App() {
 
 
 
-  function actualMimeTypeForLog(recorder, fallback) {
-
-    return recorder?.mimeType || fallback || "browser default";
-
-  }
-
-
-
   function stopRecording() {
 
     const recorder = mediaRecorderRef.current;
@@ -1875,8 +1986,6 @@ function App() {
 
     } catch (error) {
 
-      console.error("ResolveAI stop recording error:", error);
-
     }
 
 
@@ -1886,8 +1995,6 @@ function App() {
     setListening(false);
 
 
-
-    console.log("ResolveAI: recording stopped");
 
   }
 
@@ -2023,7 +2130,7 @@ function App() {
 
     const language = uiLanguage === "hi" ? "hi-IN" : uiLanguage === "kn" ? "kn-IN" : "en-IN";
     try {
-      const response = await fetch(`${API_BASE}/api/voice/synthesize`, {
+      const response = await apiFetch(`/api/voice/synthesize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, language, voice: language === "hi-IN" ? "Nalini" : "Kaveri" }),
@@ -2045,7 +2152,6 @@ function App() {
         return;
       }
     } catch (error) {
-      console.error("ResolveAI TTS error:", error);
       if (!("speechSynthesis" in window)) {
         setVoiceError("Voice playback failed. Please try again.");
         return;
@@ -2304,6 +2410,17 @@ function App() {
 
   return (
     <>
+    {(!supabaseConfigured || authLoading || !authSession) ? (
+      <main className="grid min-h-screen place-items-center bg-base-200 px-4 py-10">
+        <section className="card w-full max-w-md border border-base-300 bg-base-100 shadow-xl">
+          <div className="card-body gap-5">
+            <div><p className="text-sm font-bold uppercase tracking-widest text-primary">ResolveAI</p><h1 className="mt-2 text-3xl font-black">Your support, securely</h1><p className="mt-2 text-sm opacity-70">Sign in to keep your conversations and connected orders private to your account.</p></div>
+            {!supabaseConfigured ? <div role="alert" className="alert alert-warning text-sm">Sign-in is not configured yet. Add the Supabase project URL and public anon key to the frontend environment.</div> : authLoading ? <p role="status">Checking your sign-in…</p> : <form className="space-y-4" onSubmit={sendSignInLink}><label className="form-control w-full"><span className="label-text mb-2 font-semibold">Email address</span><input className="input input-bordered w-full" type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@example.com" /></label><button className="btn btn-primary w-full" type="submit" disabled={authBusy}>{authBusy ? "Sending link…" : "Send secure sign-in link"}</button></form>}
+            {authNotice && <p className="text-sm" role="status">{authNotice}</p>}
+          </div>
+        </section>
+      </main>
+    ) : (
     
     <div className="resolveai-app min-h-screen bg-base-200/80 text-base-content">
 
@@ -2403,7 +2520,9 @@ function App() {
 
 
 
-            <div className="navbar-end">
+            <div className="navbar-end gap-2">
+
+              <button className="btn btn-ghost btn-sm" onClick={() => void supabase.auth.signOut()}>Sign out</button>
 
               <div className="avatar avatar-placeholder">
 
@@ -4357,6 +4476,7 @@ function App() {
       </div>
 
     </div>
+    )}
   </>
   );
 

@@ -16,6 +16,14 @@ services:
         sync: false
       - key: SWIGGY_FRONTEND_URL
         sync: false
+      - key: FRONTEND_ORIGINS
+        value: https://resolveai-frontend.onrender.com
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SWIGGY_TOKEN_ENCRYPTION_KEY
+        sync: false
       - key: WHISPER_MODEL_SIZE
         value: tiny
 
@@ -25,6 +33,13 @@ services:
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://resolveai-backend.onrender.com
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
     routes:
       - type: rewrite
         source: /*
