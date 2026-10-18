@@ -163,7 +163,9 @@ Create a local `.env` from `.env.example` and add your own credentials.
 
 Complaint history is stored in Postgres under the signed-in user's ID and protected by row-level security. The browser also keeps an account-scoped local copy for continuity. Swiggy access tokens and OAuth PKCE state are encrypted in Postgres and accessible only to the backend service role. Rotating the encryption key without re-encrypting stored values will require users to reconnect Swiggy.
 
-The backend also applies per-account request limits to complaint analysis, voice, and order retrieval. These limits are in-process safeguards; configure a shared gateway/WAF rate limit before running multiple backend instances.
+The backend applies per-account request limits and bounded worker slots to expensive AI and speech requests. When capacity is full, it returns a retryable `503` with `Retry-After` instead of allowing an unlimited queue to consume memory. These safeguards are local to one backend process; they do not provide multi-instance rate limiting or unlimited capacity.
+
+The current Render blueprint uses the free plan, which may sleep when idle and has limited CPU and memory. No service can promise to handle arbitrary load without failing. Before a public launch, move the backend to an always-on instance sized for the Whisper model, add shared rate limiting and monitoring, and load-test the selected capacity. If demand outgrows one instance, move transcription to a dedicated worker queue and scale the API separately.
 
 Start FastAPI:
 
@@ -250,6 +252,7 @@ This hackathon MVP intentionally keeps the architecture lightweight.
 - The browser-local continuity copy is device/browser specific; Supabase is the account-backed history source.
 - Some resolution types require the platform's own support workflow rather than a direct API action.
 - Production deployment requires appropriate platform credentials, redirect-URI configuration and external-service review.
+- High-traffic production use needs an always-on, adequately sized backend and shared rate limiting; the current free-tier deployment is best for demos and small pilot use.
 
 ## Demo and presentation
 
