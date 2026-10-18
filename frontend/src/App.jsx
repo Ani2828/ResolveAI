@@ -905,7 +905,7 @@ function App() {
     try {
 
       const response = await apiFetch(
-        "/api/swiggy/order-details",
+        `${API_BASE}/api/swiggy/order-details`,
         {
           method: "POST",
           headers: {
@@ -1259,7 +1259,7 @@ function App() {
     try {
 
       const response = await apiFetch(
-        "/api/analyze",
+        `${API_BASE}/api/analyze`,
         {
           method: "POST",
           headers: {
