@@ -119,12 +119,24 @@ function App() {
     event.preventDefault();
     setAuthBusy(true);
     setAuthNotice("");
-    const { error } = await supabase.auth.signInWithOtp({
-      email: authEmail.trim(),
-      options: { emailRedirectTo: window.location.origin },
-    });
-    setAuthNotice(error ? "We couldn't send the sign-in link. Check your email and try again." : "Check your email for a secure sign-in link.");
-    setAuthBusy(false);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: authEmail.trim(),
+        options: { emailRedirectTo: window.location.origin },
+      });
+      const messages = {
+        email_address_not_authorized: "Supabase's test email service only sends to project team members. Configure custom SMTP to send sign-in links to app users.",
+        over_email_send_rate_limit: "Too many sign-in emails were requested. Wait before trying again, or configure custom SMTP for reliable delivery.",
+        email_provider_disabled: "Email sign-in is disabled for this project. Enable the Email provider in Supabase Authentication settings.",
+      };
+      setAuthNotice(error
+        ? messages[error.code] || "We couldn't send the sign-in link. Check the Supabase email provider, SMTP settings, and redirect URL, then try again."
+        : "Check your email for a secure sign-in link.");
+    } catch {
+      setAuthNotice("We couldn't reach the sign-in service. Check your connection and try again.");
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   async function apiFetch(path, options = {}) {
