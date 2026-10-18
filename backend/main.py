@@ -7,17 +7,19 @@ import hashlib
 import secrets
 import tempfile
 import time
+import io
 from urllib.parse import urlencode
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 from typing import Literal, Any, cast
 from openai import OpenAI
 from faster_whisper import WhisperModel
 import httpx
+import av
 
 
 # ============================================================
@@ -54,6 +56,9 @@ print("================================")
 print("Loading multilingual Whisper model...")
 
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
+GNANI_API_KEY = os.getenv("GNANI_API_KEY", "").strip()
+GNANI_STT_ENABLED = os.getenv("GNANI_STT_ENABLED", "false").lower() == "true"
+GNANI_TTS_ENABLED = os.getenv("GNANI_TTS_ENABLED", "false").lower() == "true"
 
 whisper_model = WhisperModel(
     WHISPER_MODEL_SIZE,
@@ -76,6 +81,15 @@ app = FastAPI(
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "ResolveAI Backend"}
+
+
+@app.get("/api/voice/config")
+def voice_config():
+    """Expose feature availability without ever exposing provider credentials."""
+    return {
+        "stt_provider": "gnani" if GNANI_STT_ENABLED and GNANI_API_KEY else "local",
+        "tts_enabled": GNANI_TTS_ENABLED and bool(GNANI_API_KEY),
+    }
 
 
 # ============================================================
@@ -2115,7 +2129,8 @@ def analyze_complaint(
 
 @app.post("/api/transcribe")
 async def transcribe_audio(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    language_code: str = Form("en-IN"),
 ):
 
     temp_path = None
@@ -2174,6 +2189,59 @@ async def transcribe_audio(
                     "Please record a shorter message."
                 ),
             }
+
+
+        # Gnani Prisma REST accepts audio clips up to 60 seconds and returns
+        # {success, transcript, request_id, timestamp}. Keep local Whisper as
+        # the default and fallback unless explicitly enabled with credentials.
+        if GNANI_STT_ENABLED and GNANI_API_KEY:
+            if language_code not in {"bn-IN", "en-IN", "gu-IN", "hi-IN", "kn-IN", "ml-IN", "mr-IN", "pa-IN", "ta-IN", "te-IN"}:
+                raise HTTPException(status_code=422, detail="Unsupported Gnani language code.")
+            # MediaRecorder commonly emits WebM/Opus, while Prisma REST
+            # documents WAV/MP3/OGG/FLAC/AAC/M4A. Normalize browser audio to
+            # mono 16 kHz PCM WAV using PyAV (already installed with Whisper).
+            try:
+                input_container = av.open(io.BytesIO(audio_bytes))
+                audio_stream = next((stream for stream in input_container.streams if stream.type == "audio"), None)
+                if audio_stream is None:
+                    input_container.close()
+                    raise HTTPException(status_code=422, detail="No supported audio track was found.")
+                if audio_stream.duration and audio_stream.time_base and float(audio_stream.duration * audio_stream.time_base) > 60:
+                    input_container.close()
+                    raise HTTPException(status_code=422, detail="Gnani Prisma accepts audio clips up to 60 seconds.")
+                wav_buffer = io.BytesIO()
+                output_container = av.open(wav_buffer, mode="w", format="wav")
+                output_stream = output_container.add_stream("pcm_s16le", rate=16000)
+                output_stream.layout = "mono"
+                resampler = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=16000)
+                for frame in input_container.decode(audio_stream):
+                    for converted in resampler.resample(frame):
+                        for packet in output_stream.encode(converted):
+                            output_container.mux(packet)
+                for packet in output_stream.encode(None):
+                    output_container.mux(packet)
+                output_container.close()
+                input_container.close()
+                wav_bytes = wav_buffer.getvalue()
+                async with httpx.AsyncClient(timeout=60) as client:
+                    response = await client.post(
+                        "https://api.vachana.ai/stt/v3",
+                        headers={"X-API-Key-ID": GNANI_API_KEY},
+                        data={"language_code": language_code, "format": "transcribe"},
+                        files={"audio_file": ("resolveai-voice.wav", wav_bytes, "audio/wav")},
+                    )
+                if not response.is_error:
+                    result = response.json()
+                    transcript = result.get("transcript", "").strip() if result.get("success") is True else ""
+                    if transcript:
+                        return {"success": True, "text": transcript, "language": language_code.split("-")[0], "provider": "gnani-prisma", "request_id": result.get("request_id")}
+            except HTTPException:
+                raise
+            except (httpx.HTTPError, ValueError, av.error.FFmpegError, StopIteration) as error:
+                print("Gnani Prisma transcription failed; falling back to local Whisper:", repr(error))
+            except Exception as error:
+                print("Gnani Prisma audio processing failed; falling back to local Whisper:", repr(error))
+            print("Gnani Prisma unavailable; falling back to local Whisper.")
 
 
         # ----------------------------------------------------
@@ -2358,6 +2426,37 @@ async def transcribe_audio(
             except OSError:
 
                 pass
+
+
+class SynthesizeRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    language: str = "auto"
+    voice: str = "Kaveri"
+
+
+@app.post("/api/voice/synthesize")
+async def synthesize_voice(request: SynthesizeRequest):
+    if not GNANI_TTS_ENABLED or not GNANI_API_KEY:
+        raise HTTPException(status_code=503, detail="Gnani Timbre TTS is not enabled on this server.")
+    allowed_languages = {"auto", "hi-IN", "en-IN", "ta-IN", "te-IN", "kn-IN", "ml-IN", "mr-IN", "pa-IN", "bn-IN", "gu-IN", "hi-en"}
+    if request.language not in allowed_languages:
+        raise HTTPException(status_code=422, detail="Unsupported Gnani language code.")
+    payload = {
+        "text": request.text,
+        "voice": request.voice,
+        "model": "timbre-v2.5",
+        "language": request.language,
+        "audio_config": {"sample_rate": 24000, "num_channels": 1, "sample_width": 2, "encoding": "linear_pcm", "container": "wav"},
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            "https://api.vachana.ai/api/v1/tts/inference",
+            headers={"X-API-Key-ID": GNANI_API_KEY, "Content-Type": "application/json"},
+            json=payload,
+        )
+    if response.is_error or not response.content:
+        raise HTTPException(status_code=502, detail=f"Gnani Timbre synthesis failed ({response.status_code}).")
+    return Response(content=response.content, media_type="audio/wav")
 
 
 # ============================================================
