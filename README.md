@@ -16,7 +16,7 @@ ResolveAI reduces that interaction cost:
 
 ## Core capabilities
 
-- **Voice-first complaints** using local Faster-Whisper transcription.
+- **Voice-first complaints** using local Faster-Whisper transcription, with optional Gnani Prisma STT and Timbre TTS.
 - **Automatic language detection** with support for English, Hindi, Hinglish, Kannada and other languages handled by the AI layer.
 - **AI complaint understanding** for platform, issue, product, requested action, order reference, confidence and clarification needs.
 - **Real Swiggy integration** using OAuth 2.1 + PKCE and Swiggy MCP.
@@ -55,7 +55,7 @@ ResolveAI reduces that interaction cost:
 ### Request flow
 
 1. The user speaks or types a complaint.
-2. Voice input is transcribed locally with Faster-Whisper.
+2. Voice input is transcribed locally with Faster-Whisper by default, or with Gnani Prisma when explicitly enabled on the backend.
 3. The complaint is sent to the FastAPI analysis endpoint.
 4. The AI extracts structured fields such as language, platform, issue, product and requested action.
 5. When Swiggy is connected, the application retrieves real order history and searches for a safe match.
@@ -186,6 +186,21 @@ backend/.env.example
 ```
 
 **Never commit `.env` or API keys to GitHub.**
+
+
+### Optional Gnani Prisma STT and Timbre TTS
+
+Gnani speech services are optional and disabled by default. Keep the API key in `backend/.env` only; never expose it in frontend variables or commit real credentials.
+
+```dotenv
+GNANI_API_KEY=your_gnani_api_key
+GNANI_STT_ENABLED=true
+GNANI_TTS_ENABLED=true
+```
+
+Restart the backend after changing these settings. Prisma STT is used only when enabled with a key; otherwise the existing local Faster-Whisper path remains the default and fallback. Timbre TTS is used for the spoken Swiggy support-request helper when enabled; browser speech synthesis remains the fallback.
+
+The integration expects an account-enabled Gnani API key. Live provider behavior cannot be confirmed without valid credentials and network access. No API key is included in this repository.
 
 ## Swiggy integration
 

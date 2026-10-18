@@ -1518,6 +1518,9 @@ function App() {
 
       );
 
+      const sttLanguage = uiLanguage === "hi" ? "hi-IN" : uiLanguage === "kn" ? "kn-IN" : "en-IN";
+      formData.append("language_code", sttLanguage);
+
 
 
       console.log("ResolveAI: uploading audio for transcription...");
@@ -1985,7 +1988,7 @@ function App() {
     return actions[action] || "Not sure yet";
 
   }
-  function speakSupportRequest(type) {
+  async function speakSupportRequest(type) {
     const order =
       matchedSwiggyOrder ||
       selectedSwiggyOrderDetails ||
@@ -2018,21 +2021,40 @@ function App() {
           `I am requesting that the missing item be resolved from the original order ` +
           `without placing a new paid order.`;
 
-    if (!("speechSynthesis" in window)) {
-      setVoiceError("Voice playback is not supported in this browser.");
-      return;
+    const language = uiLanguage === "hi" ? "hi-IN" : uiLanguage === "kn" ? "kn-IN" : "en-IN";
+    try {
+      const response = await fetch(`${API_BASE}/api/voice/synthesize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language, voice: language === "hi-IN" ? "Nalini" : "Kaveri" }),
+      });
+      if (response.ok) {
+        const audioUrl = URL.createObjectURL(await response.blob());
+        const audio = new Audio(audioUrl);
+        audio.onended = () => URL.revokeObjectURL(audioUrl);
+        audio.onerror = () => URL.revokeObjectURL(audioUrl);
+        await audio.play();
+      } else if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = language;
+        utterance.rate = 0.9;
+        window.speechSynthesis.speak(utterance);
+      } else {
+        setVoiceError("Voice playback is not supported in this browser.");
+        return;
+      }
+    } catch (error) {
+      console.error("ResolveAI TTS error:", error);
+      if (!("speechSynthesis" in window)) {
+        setVoiceError("Voice playback failed. Please try again.");
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = language;
+      utterance.rate = 0.9;
+      window.speechSynthesis.speak(utterance);
     }
-
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang =
-      uiLanguage === "hi" ? "hi-IN" :
-      uiLanguage === "kn" ? "kn-IN" : "en-IN";
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-
-    window.speechSynthesis.speak(utterance);
 
     setMessages((current) => [
       ...current,
