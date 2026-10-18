@@ -98,3 +98,8 @@ The current MVP uses browser-local persistence for:
 - wallpaper
 
 No cloud database is required for the current prototype.
+
+
+## Optional Gnani speech services
+
+When `GNANI_STT_ENABLED=true` and a server-side `GNANI_API_KEY` is configured, the backend normalizes recorded audio to mono 16 kHz WAV and tries Gnani Prisma STT before falling back to local Faster-Whisper. The optional `/api/voice/synthesize` endpoint uses Gnani Timbre TTS for spoken support-request drafts. Both services remain disabled by default, and browser speech synthesis remains the frontend fallback. Never commit API credentials.
