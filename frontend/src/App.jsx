@@ -36,6 +36,7 @@ function applyResolveAITheme(theme, wallpaper='') {
 
 function App() {
   const [showSettings, setShowSettings] = useState(false);
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState("conversation");
 
 
   const callbackAuthResult = new URLSearchParams(window.location.search).get("swiggy");
@@ -362,6 +363,7 @@ function App() {
 
 
   const [orderConfirmed, setOrderConfirmed] = useState(false);
+  const [marketplaceOrderReference, setMarketplaceOrderReference] = useState("");
 
   const [swiggyError, setSwiggyError] = useState(
 
@@ -2121,8 +2123,65 @@ function App() {
     );
   }
 
+  async function prepareMarketplaceSupportRequest(type) {
+    const platform = analysis?.platform;
+    const platformName = formatPlatform(platform || "");
+    const product = analysis?.product || "the item";
+    const issue = analysis?.issue ? formatIssue(analysis.issue).toLowerCase() : "the issue";
+    const action = type === "refund" ? "refund" : "replacement";
+    const orderRef = marketplaceOrderReference.trim() || analysis?.order_reference || "";
+    const requestText =
+      `Hello, I need help with my ${platformName} order${orderRef ? ` (${orderRef})` : ""}. ` +
+      `The issue is: ${issue}${product !== "the item" ? ` with ${product}` : ""}. ` +
+      `I would like you to check the order and help me with an eligible ${action}. ` +
+      `Please let me know if you need photos or any other information.`;
+    const supportUrl = platform === "amazon"
+      ? "https://www.amazon.in/contact-us/"
+      : "https://www.flipkart.com/helpcentre";
+    const supportWindow = window.open(supportUrl, "_blank", "noopener,noreferrer");
+
+    try {
+      await navigator.clipboard.writeText(requestText);
+    } catch (error) {
+      console.warn("Could not copy marketplace support request:", error);
+    }
+
+    setMessages((current) => [
+      ...current,
+      {
+        role: "agent",
+        text: `🧾 ${platformName} ${action} request is ready. ${orderRef ? "Your order reference is included." : "Select the right order in the support page; add its order ID there if requested."}\n\n${requestText}\n\nI opened ${platformName}'s official help page. Sign in there, select the order, and paste this request. ResolveAI has not submitted a return or refund, and the platform must confirm the outcome.`,
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      },
+    ]);
+
+    if (!supportWindow) {
+      setMessages((current) => [
+        ...current,
+        {
+          role: "agent",
+          text: `Your browser blocked the support tab. Open ${supportUrl} to continue.`,
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
+    }
+  }
+
   async function handleHelpSelection(value) {
   setSelectedHelp(value);
+
+  // Marketplace buyer orders are resolved through the buyer's official order support flow.
+  if (["amazon", "flipkart"].includes(analysis?.platform) && value !== "information" && value !== "unknown") {
+    const platformName = formatPlatform(analysis.platform);
+    const action = value === "refund" ? "refund" : "replacement";
+    setResolutionResult({
+      type: "info",
+      title: `Let's request an eligible ${action}`,
+      message: `I prepared the next steps for your ${platformName} order. Add an order ID if you have it, then open the official help page and choose the affected order. The platform will confirm the available resolution.`,
+      icon: value === "refund" ? "💰" : "📦",
+    });
+    return;
+  }
 
   // --------------------------------------------------
   // INFORMATION: perform the real Swiggy lookup
@@ -2323,7 +2382,7 @@ function App() {
 
         <div className="drawer-content flex min-h-screen min-w-0 flex-col">
 
-          <header className="navbar sticky top-0 z-30 h-16 min-h-16 border-b border-base-300 bg-base-100/90 px-3 sm:px-5">
+          <header className="resolveai-header navbar sticky top-0 z-30 h-16 min-h-16 border-b border-base-300 bg-base-100/90 px-3 sm:px-5">
 
             <div className="navbar-start min-w-0 gap-2">
 
@@ -2343,7 +2402,7 @@ function App() {
 
               <div className="flex min-w-0 items-center gap-2">
 
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-content">
+                <div className="resolveai-brand-mark grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-content">
 
                   <span className="font-black">R</span>
 
@@ -2421,11 +2480,11 @@ function App() {
 
 
 
-          <main className="flex-1 min-w-0 overflow-x-hidden px-3 py-4 sm:p-5 md:p-6">
+          <main className="resolveai-main flex-1 min-w-0 overflow-x-hidden px-3 py-4 sm:p-5 md:p-6">
 
             <div className="mx-auto w-full min-w-0 max-w-[1500px]">
 
-              <div className="mb-5">
+              <div className="resolveai-intro mb-5">
 
                 <div className="breadcrumbs hidden text-sm sm:block">
 
@@ -2479,15 +2538,25 @@ function App() {
 
                   </div>
 
+                  <div className="resolveai-orb-wrap hidden sm:block" aria-hidden="true">
+                    <div className="resolveai-orb">
+                      <span className="resolveai-orb-core" />
+                      <span className="resolveai-orb-ring resolveai-orb-ring-one" />
+                      <span className="resolveai-orb-ring resolveai-orb-ring-two" />
+                      <span className="resolveai-orb-spark resolveai-orb-spark-one" />
+                      <span className="resolveai-orb-spark resolveai-orb-spark-two" />
+                    </div>
+                  </div>
+
                 </div>
 
               </div>
 
 
 
-              <div className="mb-5 grid min-w-0 grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
+              <div className="resolveai-summary-grid mb-5 grid min-w-0 grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
 
-                <div className="card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
+                <div className="resolveai-summary-card card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
 
                   <div className="card-body min-w-0 p-3 sm:p-4">
 
@@ -2515,7 +2584,7 @@ function App() {
 
 
 
-                <div className="card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
+                <div className="resolveai-summary-card card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
 
                   <div className="card-body min-w-0 p-3 sm:p-4">
 
@@ -2545,7 +2614,7 @@ function App() {
 
 
 
-                <div className="card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
+                <div className="resolveai-summary-card card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
 
                   <div className="card-body min-w-0 p-3 sm:p-4">
 
@@ -2573,7 +2642,7 @@ function App() {
 
 
 
-                <div className="card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
+                <div className="resolveai-summary-card card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
 
                   <div className="card-body min-w-0 p-3 sm:p-4">
 
@@ -2603,9 +2672,29 @@ function App() {
 
 
 
-              <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="resolveai-workspace-switch" role="group" aria-label="Choose what to view" data-active={activeWorkspaceTab}>
+                <span className="resolveai-workspace-slider" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="resolveai-workspace-tab"
+                  aria-pressed={activeWorkspaceTab === "conversation"}
+                  onClick={() => setActiveWorkspaceTab("conversation")}
+                >
+                  <span aria-hidden="true">💬</span> Conversation
+                </button>
+                <button
+                  type="button"
+                  className="resolveai-workspace-tab"
+                  aria-pressed={activeWorkspaceTab === "orders"}
+                  onClick={() => setActiveWorkspaceTab("orders")}
+                >
+                  <span aria-hidden="true">📦</span> Order details
+                </button>
+              </div>
 
-                <section className="card min-w-0 overflow-hidden border border-base-300 bg-base-100/90 shadow-sm">
+              <div className="resolveai-workspace-grid grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+
+                <section className={`resolveai-workspace-panel resolveai-panel-conversation resolveai-chat-card card min-w-0 overflow-hidden border border-base-300 bg-base-100/90 shadow-sm ${activeWorkspaceTab === "conversation" ? "is-active" : ""}`}>
 
                   <div className="border-b border-base-300 p-4 sm:p-5">
 
@@ -2997,7 +3086,7 @@ function App() {
 
 
 
-                <aside className="min-w-0 space-y-4">
+                <aside className={`resolveai-workspace-panel resolveai-panel-orders min-w-0 space-y-4 ${activeWorkspaceTab === "orders" ? "is-active" : ""}`}>
 
                   <div className="card min-w-0 border border-base-300 bg-base-100/90 shadow-sm">
 
@@ -3578,6 +3667,37 @@ function App() {
           <p className="mt-1 text-sm">
             {resolutionResult.message}
           </p>
+
+          {resolutionResult.type !== "loading" &&
+            ["amazon", "flipkart"].includes(analysis?.platform) &&
+            ["refund", "replacement"].includes(selectedHelp) && (
+              <div className="mt-4 space-y-3 rounded-box border border-primary/20 bg-base-100/80 p-4">
+                <div className="font-semibold">Help me resolve this order</div>
+                <p className="text-xs leading-5 text-base-content/60">
+                  ResolveAI will prepare the message and open the marketplace's official help page. Your order details stay here; sign in and select your order on the marketplace page.
+                </p>
+                <label className="form-control">
+                  <span className="label-text mb-1 text-xs">Order ID (optional)</span>
+                  <input
+                    className="input input-bordered w-full"
+                    value={marketplaceOrderReference}
+                    onChange={(event) => setMarketplaceOrderReference(event.target.value)}
+                    placeholder="Add it if you have it"
+                    autoComplete="off"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-primary w-full"
+                  onClick={() => prepareMarketplaceSupportRequest(selectedHelp)}
+                >
+                  Open {formatPlatform(analysis.platform)} support & prepare request
+                </button>
+                <p className="text-xs text-base-content/50">
+                  You submit the request on the marketplace. A refund or replacement is complete only after they confirm it.
+                </p>
+              </div>
+            )}
 
           {resolutionResult.type === "loading" && (
             <div className="mt-4 flex items-center gap-2 text-sm text-base-content/60">
