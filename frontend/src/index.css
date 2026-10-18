@@ -1,7 +1,142 @@
 @import "tailwindcss";
-html,body,#root{min-height:100%;}
-body{margin:0;background-color:var(--color-base-200,#f5f7fb);color:var(--color-base-content,#172033);transition:background-color .25s ease,color .25s ease;}
-.resolveai-app{min-height:100vh;background-color:color-mix(in srgb,var(--color-base-200,#f5f7fb) 78%,transparent)!important;color:var(--color-base-content,#172033)!important;transition:background-color .25s ease,color .25s ease;}
-.resolveai-app .bg-base-100{background-color:color-mix(in srgb,var(--color-base-100,#fff) 88%,transparent)!important;}
-.resolveai-app .bg-base-200{background-color:color-mix(in srgb,var(--color-base-200,#f5f7fb) 78%,transparent)!important;}
-.resolveai-app .bg-base-300{background-color:color-mix(in srgb,var(--color-base-300,#e5e7eb) 88%,transparent)!important;}
+
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  background-color: var(--color-base-200, #f5f7fb);
+  color: var(--color-base-content, #172033);
+  transition: background-color .25s ease, color .25s ease;
+}
+.resolveai-app {
+  min-height: 100vh;
+  color: var(--color-base-content, #172033) !important;
+  background:
+    radial-gradient(ellipse at 78% 12%, color-mix(in srgb, var(--color-primary, #6558df) 10%, transparent), transparent 34rem),
+    radial-gradient(ellipse at 15% 70%, color-mix(in srgb, #43b9c7 7%, transparent), transparent 30rem),
+    color-mix(in srgb, var(--color-base-200, #f5f7fb) 86%, white) !important;
+  transition: background-color .25s ease, color .25s ease;
+}
+.resolveai-app .bg-base-100 { background-color: color-mix(in srgb, var(--color-base-100, #fff) 88%, transparent) !important; }
+.resolveai-app .bg-base-200 { background-color: color-mix(in srgb, var(--color-base-200, #f5f7fb) 78%, transparent) !important; }
+.resolveai-app .bg-base-300 { background-color: color-mix(in srgb, var(--color-base-300, #e5e7eb) 88%, transparent) !important; }
+
+.resolveai-header {
+  backdrop-filter: blur(18px);
+  box-shadow: 0 4px 24px rgb(31 41 55 / 4%);
+}
+.resolveai-brand-mark {
+  position: relative;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-primary, #6558df) 32%, transparent), inset 0 1px 0 rgb(255 255 255 / 38%);
+  transform: perspective(120px) rotateY(-8deg) rotateX(5deg);
+  transition: transform .25s ease, box-shadow .25s ease;
+}
+.resolveai-brand-mark:hover { transform: perspective(120px) rotateY(8deg) rotateX(-5deg) translateY(-2px); }
+.resolveai-main { position: relative; isolation: isolate; }
+.resolveai-intro { position: relative; min-height: 128px; animation: resolveai-rise .55s both; }
+.resolveai-intro h1 { letter-spacing: -.045em; }
+.resolveai-summary-card {
+  transform: perspective(900px) translateZ(0);
+  box-shadow: 0 8px 24px rgb(24 36 66 / 5%), inset 0 1px 0 rgb(255 255 255 / 35%);
+  transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease;
+  animation: resolveai-rise .5s both;
+}
+.resolveai-summary-card:nth-child(2) { animation-delay: 55ms; }
+.resolveai-summary-card:nth-child(3) { animation-delay: 110ms; }
+.resolveai-summary-card:nth-child(4) { animation-delay: 165ms; }
+.resolveai-summary-card:hover {
+  transform: perspective(900px) translateY(-4px) rotateX(1.5deg);
+  border-color: color-mix(in srgb, var(--color-primary, #6558df) 28%, var(--color-base-300, #e5e7eb));
+  box-shadow: 0 16px 32px rgb(24 36 66 / 10%);
+}
+.resolveai-chat-card {
+  box-shadow: 0 18px 48px rgb(24 36 66 / 7%), inset 0 1px 0 rgb(255 255 255 / 45%);
+  animation: resolveai-rise .6s .1s both;
+}
+.resolveai-workspace-switch { display: none; }
+.resolveai-workspace-slider {
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border: 1px solid color-mix(in srgb, var(--color-primary, #6558df) 18%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-base-100, #fff) 92%, transparent);
+  box-shadow: 0 4px 12px rgb(35 43 80 / 9%), inset 0 1px 0 rgb(255 255 255 / 70%);
+  transition: transform .32s cubic-bezier(.2,.8,.2,1);
+  pointer-events: none;
+}
+.resolveai-workspace-switch[data-active="orders"] .resolveai-workspace-slider { transform: translateX(100%); }
+.resolveai-workspace-tab {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-base-content, #172033) 62%, transparent);
+  font: inherit;
+  font-size: .875rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color .2s ease, transform .2s ease;
+}
+.resolveai-workspace-tab[aria-pressed="true"] { color: var(--color-base-content, #172033); }
+.resolveai-workspace-tab:active { transform: scale(.98); }
+.resolveai-workspace-tab:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-primary, #6558df) 45%, transparent); outline-offset: 2px; }
+.resolveai-panel-orders, .resolveai-panel-conversation { animation: resolveai-tab-in .28s both; }
+.resolveai-app .btn { transition: transform .18s ease, box-shadow .18s ease, filter .18s ease; }
+.resolveai-app .btn:hover:not(:disabled) { transform: translateY(-1px); filter: saturate(1.08); }
+.resolveai-app .textarea, .resolveai-app input, .resolveai-app select { transition: border-color .18s ease, box-shadow .18s ease; }
+.resolveai-app .textarea:focus, .resolveai-app input:focus, .resolveai-app select:focus {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary, #6558df) 13%, transparent);
+}
+.resolveai-orb-wrap { position: absolute; right: clamp(0px, 6vw, 100px); top: 0; width: 146px; height: 126px; perspective: 500px; pointer-events: none; }
+.resolveai-orb { position: absolute; inset: 8px 20px 4px; transform-style: preserve-3d; animation: resolveai-float 6s ease-in-out infinite; }
+.resolveai-orb-core {
+  position: absolute; left: 36px; top: 25px; width: 54px; height: 54px; border-radius: 50%;
+  background: radial-gradient(circle at 32% 25%, #fff 0 4%, #b5baff 17%, #7779ed 42%, #4a55b8 72%, #303b8c 100%);
+  box-shadow: inset -8px -10px 16px rgb(22 28 100 / 25%), inset 5px 5px 11px rgb(255 255 255 / 75%), 0 12px 25px rgb(79 86 194 / 30%);
+  transform: translateZ(18px);
+}
+.resolveai-orb-ring { position: absolute; left: 13px; top: 36px; width: 100px; height: 34px; border: 1.5px solid rgb(106 112 221 / 45%); border-radius: 50%; box-shadow: 0 0 12px rgb(106 112 221 / 12%); }
+.resolveai-orb-ring-one { transform: rotate(-24deg) rotateX(66deg); }
+.resolveai-orb-ring-two { transform: rotate(45deg) rotateX(66deg) rotateY(35deg); border-color: rgb(65 186 196 / 45%); }
+.resolveai-orb-spark { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: #4fc3cc; box-shadow: 0 0 12px rgb(79 195 204 / 75%); }
+.resolveai-orb-spark-one { right: 5px; top: 33px; }
+.resolveai-orb-spark-two { left: 15px; bottom: 17px; width: 5px; height: 5px; background: #a996ff; }
+@keyframes resolveai-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes resolveai-float { 0%, 100% { transform: translateY(0) rotateX(0) rotateY(-8deg); } 50% { transform: translateY(-7px) rotateX(5deg) rotateY(8deg); } }
+@keyframes resolveai-tab-in { from { opacity: 0; transform: translateY(5px) scale(.995); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (max-width: 1023px) {
+  .resolveai-workspace-switch {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+    margin: 0 0 14px;
+    padding: 4px;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--color-base-300, #e5e7eb) 86%, transparent);
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--color-base-200, #f5f7fb) 80%, transparent);
+    box-shadow: inset 0 2px 6px rgb(30 41 59 / 5%);
+  }
+  .resolveai-workspace-panel { display: none; }
+  .resolveai-workspace-panel.is-active { display: block; }
+}
+@media (min-width: 640px) and (max-width: 1023px) {
+  .resolveai-workspace-switch { max-width: 480px; margin-left: auto; margin-right: auto; }
+}
+@media (max-width: 639px) {
+  .resolveai-intro { min-height: auto; }
+  .resolveai-summary-card { box-shadow: 0 5px 16px rgb(24 36 66 / 5%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
