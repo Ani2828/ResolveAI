@@ -197,6 +197,14 @@ async def _supabase_request(method: str, path: str, **kwargs):
                 headers=_supabase_headers(kwargs.pop("prefer", None)),
                 **kwargs,
             )
+        if response.is_error:
+            # PostgREST error bodies contain actionable schema/permission details,
+            # but never log request headers or credentials.
+            logger.warning(
+                "Account storage returned HTTP %s: %s",
+                response.status_code,
+                response.text[:500],
+            )
         response.raise_for_status()
         return response.json() if response.content else None
     except HTTPException:
@@ -676,7 +684,7 @@ app.add_middleware(
         origin.strip().rstrip("/")
         for origin in os.getenv(
             "FRONTEND_ORIGINS",
-            "http://localhost:5173,http://127.0.0.1:5173,https://resolveai-frontend.onrender.com",
+            "http://localhost:5173,http://127.0.0.1:5173,https://resolveai-frontend-9f0z.onrender.com",
         ).split(",")
         if origin.strip()
     ],
@@ -2168,7 +2176,18 @@ async def analyze_complaint(
         # AI UNDERSTANDING
         # ----------------------------------------------------
 
-        swiggy_session = await _load_swiggy_session(user["id"])
+        try:
+            swiggy_session = await _load_swiggy_session(user["id"])
+        except HTTPException as storage_error:
+            # Complaint understanding does not require order access. If optional
+            # Swiggy session storage is temporarily unavailable, keep the core
+            # analysis flow available and clearly treat the account as unconnected.
+            if storage_error.status_code != 503:
+                raise
+            logger.warning(
+                "Swiggy session lookup unavailable; continuing without order data"
+            )
+            swiggy_session = None
         result = await asyncio.to_thread(
             analyze_with_ai,
             message,
