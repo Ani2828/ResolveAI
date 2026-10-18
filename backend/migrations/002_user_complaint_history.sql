@@ -16,6 +16,7 @@ create index if not exists resolveai_complaints_user_created_idx
 alter table public.resolveai_complaints enable row level security;
 revoke all on table public.resolveai_complaints from anon, authenticated;
 grant select, insert, update, delete on table public.resolveai_complaints to authenticated;
+grant usage on schema public to authenticated, service_role;
 
 create policy "Users can read their own complaints"
   on public.resolveai_complaints for select to authenticated
