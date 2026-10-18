@@ -1657,6 +1657,11 @@ function App() {
 
   async function transcribeAudio(audioBlob, mimeType) {
 
+    if (isGuest) {
+      setVoiceError("Voice transcription needs a signed-in session in this demo. You can type a sample complaint as a guest.");
+      return;
+    }
+
     const requestAccountGeneration = accountGeneration.current;
 
     try {
@@ -2274,6 +2279,24 @@ function App() {
   async function handleHelpSelection(value) {
   setSelectedHelp(value);
 
+  if (isGuest) {
+    setResolutionResult({
+      type: "info",
+      title: "Guest demo guidance",
+      message: "This is sample guidance only. ResolveAI has not checked a real order or submitted a refund/replacement request. Sign in and connect your shopping account to use account-specific resolution features.",
+      icon: "🧪",
+    });
+    setMessages((current) => [
+      ...current,
+      {
+        role: "agent",
+        text: "Guest demo: this is a sample next step only. No real order was checked and no request was submitted.",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      },
+    ]);
+    return;
+  }
+
   // --------------------------------------------------
   // INFORMATION: perform the real Swiggy lookup
   // --------------------------------------------------
@@ -2461,7 +2484,7 @@ function App() {
             <div><p className="text-sm font-bold uppercase tracking-widest text-primary">ResolveAI</p><h1 className="mt-2 text-3xl font-black">Your support, securely</h1><p className="mt-2 text-sm opacity-70">Sign in to keep your conversations and connected orders private to your account.</p></div>
             {!supabaseConfigured ? <div role="alert" className="alert alert-warning text-sm">Sign-in is not configured yet. Add the Supabase project URL and public anon key to the frontend environment.</div> : authLoading ? <p role="status">Checking your sign-in…</p> : <form className="space-y-4" onSubmit={sendSignInLink}><label className="form-control w-full"><span className="label-text mb-2 font-semibold">Email address</span><input className="input input-bordered w-full" type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@example.com" /></label><button className="btn btn-primary w-full" type="submit" disabled={authBusy}>{authBusy ? "Sending link…" : "Send secure sign-in link"}</button></form>}
             {authNotice && <p className="text-sm" role="status">{authNotice}</p>}
-            {!authLoading && supabaseConfigured && <div className="space-y-3 border-t border-base-300 pt-4">
+            {!authLoading && <div className="space-y-3 border-t border-base-300 pt-4">
               <button type="button" className="btn btn-outline w-full" onClick={() => { setIsGuest(true); setAuthNotice(""); setMessages([{ role: "agent", text: "Welcome to ResolveAI's guest demo. Try a sample complaint such as “My food item was missing” or “My delivery was late.” This demo uses sample guidance only; it does not access real orders or submit a real refund/replacement request.", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]); }}>
                 Continue as Guest
               </button>
