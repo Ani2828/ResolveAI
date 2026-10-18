@@ -43,13 +43,48 @@ function App() {
   const [authNotice, setAuthNotice] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const accountId = authSession?.user?.id || "";
+  const previousAccountId = useRef(null);
+  const accountGeneration = useRef(0);
+  const discardRecordingRef = useRef(false);
 
   function selectAccountData(session) {
     const id = session?.user?.id;
+    const nextId = id || null;
+    if (previousAccountId.current !== nextId) {
+      previousAccountId.current = nextId;
+      accountGeneration.current += 1;
+      discardRecordingRef.current = true;
+      if (mediaRecorderRef.current?.state && mediaRecorderRef.current.state !== "inactive") {
+        try { mediaRecorderRef.current.stop(); } catch {}
+      }
+      micStreamRef.current?.getTracks().forEach((track) => track.stop());
+      micStreamRef.current = null;
+      audioChunksRef.current = [];
+      setMessages(initialMessages);
+      setInput("");
+      setAnalysis(null);
+      setResolutionResult(null);
+      setSelectedHelp(null);
+      setShowDetails(false);
+      setSwiggyConnected(false);
+      setSwiggyAddresses([]);
+      setSwiggyAddressId("");
+      setSwiggyOrders([]);
+      setSelectedSwiggyOrderId("");
+      setSelectedSwiggyOrderDetails(null);
+      setMatchedSwiggyOrder(null);
+      setOrderConfirmed(false);
+      setOrderMatchStatus("idle");
+      setLoading(false);
+      setListening(false);
+      setTranscribing(false);
+      setVoiceError("");
+      setSwiggyError("");
+      setSidebarPanel(null);
+    }
     if (!id) {
       setProblemHistory([]);
       setUserProfile({ name: "", email: "", phone: "" });
-      setMessages(initialMessages);
       return;
     }
     try {
@@ -59,7 +94,6 @@ function App() {
       setProblemHistory([]);
       setUserProfile({ name: "", email: session.user.email || "", phone: "" });
     }
-    setMessages(initialMessages);
   }
 
   useEffect(() => {
@@ -96,10 +130,13 @@ function App() {
   async function apiFetch(path, options = {}) {
     const { data } = await supabase.auth.getSession();
     const accessToken = data?.session?.access_token;
-    if (!accessToken) throw new Error("Your session expired. Sign in again to continue.");
+    if (!accessToken || data.session.user.id !== accountId) throw new Error("Your session expired. Sign in again to continue.");
+    const requestAccountGeneration = accountGeneration.current;
     const headers = new Headers(options.headers || {});
     headers.set("Authorization", `Bearer ${accessToken}`);
-    return fetch(`${API_BASE}${path}`, { ...options, headers });
+    const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    if (requestAccountGeneration !== accountGeneration.current) throw new Error("Your account changed. Please retry your request.");
+    return response;
   }
 
 
@@ -1183,6 +1220,8 @@ function App() {
 
   async function sendMessage() {
 
+    const requestAccountGeneration = accountGeneration.current;
+
     const text = input.trim();
 
     if (
@@ -1259,6 +1298,7 @@ function App() {
 
       const data =
         await response.json();
+      if (requestAccountGeneration !== accountGeneration.current) return;
       const detectedUiLanguage = normalizeUiLanguage(data?.language);
       setUiLanguage(detectedUiLanguage);
       localStorage.setItem("resolveai_ui_language", detectedUiLanguage);
@@ -1573,6 +1613,8 @@ function App() {
 
   async function transcribeAudio(audioBlob, mimeType) {
 
+    const requestAccountGeneration = accountGeneration.current;
+
     try {
 
       setTranscribing(true);
@@ -1623,6 +1665,7 @@ function App() {
 
 
       const data = await response.json();
+      if (requestAccountGeneration !== accountGeneration.current) return;
 
 
 
@@ -1820,6 +1863,11 @@ function App() {
 
         }
 
+        if (discardRecordingRef.current) {
+          discardRecordingRef.current = false;
+          return;
+        }
+
 
 
         if (audioBlob.size === 0) {
@@ -1843,6 +1891,8 @@ function App() {
 
 
       mediaRecorderRef.current = recorder;
+
+      discardRecordingRef.current = false;
 
       recorder.start();
 
