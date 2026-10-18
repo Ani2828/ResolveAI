@@ -1,4 +1,5 @@
 import os
+import asyncio
 import builtins
 import json
 import re
@@ -8,16 +9,25 @@ import secrets
 import tempfile
 import time
 import io
+import logging
+import uuid
+import threading
+from collections import defaultdict, deque
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from typing import Literal, Any, cast
 from openai import OpenAI
 from faster_whisper import WhisperModel
+import jwt
+from jwt import PyJWKClient
 import httpx
 import av
 
@@ -27,6 +37,8 @@ import av
 # ============================================================
 
 load_dotenv()
+
+logger = logging.getLogger("resolveai")
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 
@@ -101,10 +113,149 @@ SWIGGY_REDIRECT_URI = os.getenv(
     "SWIGGY_REDIRECT_URI",
     "http://localhost:8000/api/swiggy/callback",
 )
-SWIGGY_AUTH_STATE = {}
 SWIGGY_CLIENT_ID = os.getenv("SWIGGY_CLIENT_ID")
-SWIGGY_ACCESS_TOKEN = None
-SWIGGY_TOKEN_EXPIRES_AT = 0
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+SWIGGY_TOKEN_ENCRYPTION_KEY = os.getenv("SWIGGY_TOKEN_ENCRYPTION_KEY", "").strip()
+SUPABASE_JWKS = (
+    PyJWKClient(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json", cache_keys=True)
+    if SUPABASE_URL
+    else None
+)
+bearer_scheme = HTTPBearer(auto_error=False)
+_rate_limit_buckets: dict[str, deque[float]] = defaultdict(deque)
+_rate_limit_lock = threading.Lock()
+
+
+def enforce_user_rate_limit(user_id: str, scope: str, limit: int, window_seconds: int = 60):
+    """Apply a small per-account abuse limit to expensive authenticated operations."""
+    now = time.monotonic()
+    key = f"{user_id}:{scope}"
+    with _rate_limit_lock:
+        bucket = _rate_limit_buckets[key]
+        while bucket and bucket[0] <= now - window_seconds:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            retry_after = max(1, int(window_seconds - (now - bucket[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please wait a moment and try again.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        bucket.append(now)
+        if len(_rate_limit_buckets) > 10000:
+            expired = [
+                bucket_key
+                for bucket_key, values in _rate_limit_buckets.items()
+                if not values or values[0] <= now - window_seconds
+            ]
+            for bucket_key in expired:
+                _rate_limit_buckets.pop(bucket_key, None)
+
+
+def require_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    if not SUPABASE_URL or SUPABASE_JWKS is None:
+        raise HTTPException(status_code=503, detail="Authentication is not configured.")
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Sign in to continue.")
+    try:
+        signing_key = SUPABASE_JWKS.get_signing_key_from_jwt(credentials.credentials)
+        claims = jwt.decode(
+            credentials.credentials,
+            signing_key.key,
+            algorithms=["ES256", "RS256"],
+            audience="authenticated",
+            issuer=f"{SUPABASE_URL}/auth/v1",
+            options={"require": ["exp", "iss", "sub", "aud"]},
+        )
+        return {"id": str(uuid.UUID(claims["sub"]))}
+    except (jwt.PyJWTError, ValueError, KeyError):
+        raise HTTPException(status_code=401, detail="Your session is invalid or expired. Sign in again.")
+
+
+def _supabase_headers(prefer: str | None = None) -> dict[str, str]:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=503, detail="Account storage is not configured.")
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+async def _supabase_request(method: str, path: str, **kwargs):
+    try:
+        async with httpx.AsyncClient(timeout=10) as supabase_client:
+            response = await supabase_client.request(
+                method,
+                f"{SUPABASE_URL}/rest/v1/{path}",
+                headers=_supabase_headers(kwargs.pop("prefer", None)),
+                **kwargs,
+            )
+        response.raise_for_status()
+        return response.json() if response.content else None
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as error:
+        logger.warning("Account storage request failed (%s)", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Account storage is temporarily unavailable.") from error
+
+
+def _encrypt_swiggy_secret(value: str) -> str:
+    if not SWIGGY_TOKEN_ENCRYPTION_KEY:
+        raise HTTPException(status_code=503, detail="Swiggy token encryption is not configured.")
+    try:
+        from cryptography.fernet import Fernet
+        return Fernet(SWIGGY_TOKEN_ENCRYPTION_KEY.encode("ascii")).encrypt(value.encode()).decode()
+    except (ValueError, UnicodeError) as error:
+        logger.error("Swiggy token encryption key is invalid")
+        raise HTTPException(status_code=503, detail="Swiggy token encryption is not configured correctly.") from error
+
+
+def _decrypt_swiggy_secret(value: str) -> str:
+    if not SWIGGY_TOKEN_ENCRYPTION_KEY:
+        raise HTTPException(status_code=503, detail="Swiggy token encryption is not configured.")
+    try:
+        from cryptography.fernet import Fernet, InvalidToken
+        return Fernet(SWIGGY_TOKEN_ENCRYPTION_KEY.encode("ascii")).decrypt(value.encode()).decode()
+    except (ValueError, UnicodeError, InvalidToken) as error:
+        logger.error("Swiggy token decryption failed")
+        raise HTTPException(status_code=503, detail="Swiggy authorization needs to be refreshed.") from error
+
+
+async def _load_swiggy_session(user_id: str):
+    rows = await _supabase_request(
+        "GET",
+        "resolveai_swiggy_tokens",
+        params={"user_id": f"eq.{user_id}", "select": "access_token_ciphertext,expires_at", "limit": "1"},
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")).timestamp()
+    if expires_at <= time.time():
+        await _supabase_request("DELETE", "resolveai_swiggy_tokens", params={"user_id": f"eq.{user_id}"})
+        return None
+    return _decrypt_swiggy_secret(row["access_token_ciphertext"]), expires_at
+
+
+async def _store_swiggy_session(user_id: str, access_token: str, expires_in: int):
+    expires_at = datetime.fromtimestamp(time.time() + max(60, min(expires_in, 30 * 86400)), timezone.utc).isoformat()
+    await _supabase_request(
+        "POST",
+        "resolveai_swiggy_tokens?on_conflict=user_id",
+        json={"user_id": user_id, "access_token_ciphertext": _encrypt_swiggy_secret(access_token), "expires_at": expires_at},
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+
+
+async def _clear_swiggy_session(user_id: str):
+    await _supabase_request("DELETE", "resolveai_swiggy_tokens", params={"user_id": f"eq.{user_id}"})
 
 
 def _base64url(data: bytes) -> str:
@@ -142,7 +293,7 @@ async def _register_swiggy_client() -> str:
         raise HTTPException(status_code=502, detail="Swiggy did not return an OAuth client ID.")
     SWIGGY_CLIENT_ID = client_id
     return client_id
-async def _mcp_call(tool_name: str, arguments: dict) -> dict:
+async def _mcp_call(tool_name: str, arguments: dict, user_id: str) -> dict:
     """
     Call a Swiggy MCP tool.
 
@@ -155,10 +306,8 @@ async def _mcp_call(tool_name: str, arguments: dict) -> dict:
     - SSE/data responses
     """
 
-    if (
-        not SWIGGY_ACCESS_TOKEN
-        or time.time() >= SWIGGY_TOKEN_EXPIRES_AT
-    ):
+    session = await _load_swiggy_session(user_id)
+    if not session:
         raise HTTPException(
             status_code=401,
             detail="Swiggy authorization required. Please connect again.",
@@ -170,7 +319,7 @@ async def _mcp_call(tool_name: str, arguments: dict) -> dict:
             f"{SWIGGY_BASE_URL}/food",
 
             headers={
-                "Authorization": f"Bearer {SWIGGY_ACCESS_TOKEN}",
+                "Authorization": f"Bearer {session[0]}",
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
             },
@@ -192,7 +341,7 @@ async def _mcp_call(tool_name: str, arguments: dict) -> dict:
 
     if response.status_code in (401, 419):
 
-        _clear_swiggy_session()
+        await _clear_swiggy_session(user_id)
 
         raise HTTPException(
             status_code=401,
@@ -517,23 +666,34 @@ async def _mcp_call(tool_name: str, arguments: dict) -> dict:
 
     return result
 
-def _clear_swiggy_session():
-    global SWIGGY_ACCESS_TOKEN, SWIGGY_TOKEN_EXPIRES_AT
-    SWIGGY_ACCESS_TOKEN = None
-    SWIGGY_TOKEN_EXPIRES_AT = 0
-
-
 # ============================================================
 # CORS
 # ============================================================
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        origin.strip().rstrip("/")
+        for origin in os.getenv(
+            "FRONTEND_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173,https://resolveai-frontend.onrender.com",
+        ).split(",")
+        if origin.strip()
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    return response
 
 
 # ============================================================
@@ -546,9 +706,9 @@ class ConversationTurn(BaseModel):
 
 
 class ComplaintRequest(BaseModel):
-    message: str
-    conversation: list[ConversationTurn] = Field(default_factory=list)
-    requested_action: str | None = None
+    message: str = Field(min_length=1, max_length=4000)
+    conversation: list[ConversationTurn] = Field(default_factory=list, max_length=20)
+    requested_action: str | None = Field(default=None, max_length=32)
 
 
 # ============================================================
@@ -821,17 +981,13 @@ def clean_json_output(text: str):
 def analyze_with_ai(
     message: str,
     conversation=None,
+    swiggy_connected: bool = False,
 ):
     conversation = conversation or []
 
     # ========================================================
     # CONNECTED PLATFORM CONTEXT
     # ========================================================
-
-    swiggy_connected = bool(
-        SWIGGY_ACCESS_TOKEN
-        and time.time() < SWIGGY_TOKEN_EXPIRES_AT
-    )
 
     connected_context = ""
 
@@ -1008,10 +1164,6 @@ Never claim that a refund has already happened.
     # VALIDATE AI OUTPUT
     # ============================================================
 
-    print("")
-    print("AI RAW RESPONSE:")
-    print(raw_content)
-
     if not raw_content:
         raise ValueError(
             "AI returned an empty response."
@@ -1034,10 +1186,6 @@ Never claim that a refund has already happened.
             cleaned_output
         )
     except json.JSONDecodeError as exc:
-        print(
-            "AI INVALID JSON:",
-            raw_content,
-        )
         raise ValueError(
             "AI did not return valid JSON."
         ) from exc
@@ -1342,23 +1490,43 @@ def root():
 
 
 @app.get("/api/swiggy/status")
-def swiggy_status():
-    connected = bool(SWIGGY_ACCESS_TOKEN and time.time() < SWIGGY_TOKEN_EXPIRES_AT)
+async def swiggy_status(user: dict = Depends(require_current_user)):
+    session = await _load_swiggy_session(user["id"])
+    connected = bool(session)
     return {
         "connected": connected,
-        "expires_at": SWIGGY_TOKEN_EXPIRES_AT if connected else None,
+        "expires_at": session[1] if connected else None,
         "authorization_required": not connected,
     }
 
 
 @app.post("/api/swiggy/connect")
-async def swiggy_connect():
+async def swiggy_connect(user: dict = Depends(require_current_user)):
     """Start Swiggy's real authorization-code flow with PKCE."""
     client_id = await _register_swiggy_client()
     verifier = _base64url(secrets.token_bytes(32))
     challenge = _base64url(hashlib.sha256(verifier.encode("ascii")).digest())
     state = secrets.token_urlsafe(32)
-    SWIGGY_AUTH_STATE[state] = {"verifier": verifier, "created_at": time.time()}
+    now = datetime.now(timezone.utc)
+    await _supabase_request(
+        "DELETE",
+        "resolveai_swiggy_oauth_states",
+        params={
+            "user_id": f"eq.{user['id']}",
+            "created_at": f"lt.{datetime.fromtimestamp(now.timestamp() - 600, timezone.utc).isoformat()}",
+        },
+    )
+    await _supabase_request(
+        "POST",
+        "resolveai_swiggy_oauth_states",
+        json={
+            "state": state,
+            "user_id": user["id"],
+            "verifier_ciphertext": _encrypt_swiggy_secret(verifier),
+            "created_at": now.isoformat(),
+        },
+        prefer="return=minimal",
+    )
     query = urlencode({
         "response_type": "code",
         "client_id": client_id,
@@ -1373,12 +1541,25 @@ async def swiggy_connect():
 
 @app.get("/api/swiggy/callback")
 async def swiggy_callback(request: Request):
-    global SWIGGY_ACCESS_TOKEN, SWIGGY_TOKEN_EXPIRES_AT
     frontend_url = os.getenv("SWIGGY_FRONTEND_URL", "http://127.0.0.1:5173/")
     error = request.query_params.get("error")
     state = request.query_params.get("state", "")
-    state_data = SWIGGY_AUTH_STATE.pop(state, None)
-    if error or not state_data or time.time() - state_data["created_at"] > 600:
+    if not state:
+        return RedirectResponse(f"{frontend_url}?swiggy=authorization_required", status_code=303)
+
+    try:
+        state_rows = await _supabase_request(
+            "POST",
+            "rpc/consume_resolveai_swiggy_oauth_state",
+            json={"p_state": state},
+        )
+    except HTTPException:
+        return RedirectResponse(f"{frontend_url}?swiggy=authorization_required", status_code=303)
+    state_data = state_rows[0] if isinstance(state_rows, list) and state_rows else None
+    created_at = None
+    if state_data:
+        created_at = datetime.fromisoformat(state_data["created_at"].replace("Z", "+00:00")).timestamp()
+    if error or not state_data or created_at is None or time.time() - created_at > 600:
         return RedirectResponse(f"{frontend_url}?swiggy=authorization_required", status_code=303)
 
     code = request.query_params.get("code")
@@ -1387,7 +1568,7 @@ async def swiggy_callback(request: Request):
     token_request = {
         "grant_type": "authorization_code",
         "code": code,
-        "code_verifier": state_data["verifier"],
+        "code_verifier": _decrypt_swiggy_secret(state_data["verifier_ciphertext"]),
         "redirect_uri": SWIGGY_REDIRECT_URI,
     }
     if SWIGGY_CLIENT_ID:
@@ -1400,31 +1581,34 @@ async def swiggy_callback(request: Request):
         access_token = token_result.get("access_token")
         if not access_token:
             raise ValueError("Missing access token")
-        SWIGGY_ACCESS_TOKEN = access_token
-        SWIGGY_TOKEN_EXPIRES_AT = time.time() + int(token_result.get("expires_in", 432000))
-    except (httpx.HTTPError, ValueError, TypeError):
-        _clear_swiggy_session()
+        await _store_swiggy_session(
+            state_data["user_id"],
+            access_token,
+            int(token_result.get("expires_in", 432000)),
+        )
+    except (httpx.HTTPError, ValueError, TypeError, HTTPException):
         return RedirectResponse(f"{frontend_url}?swiggy=authorization_required", status_code=303)
     return RedirectResponse(f"{frontend_url}?swiggy=connected", status_code=303)
 
 
 @app.get("/api/swiggy/addresses")
-async def swiggy_addresses():
-    result = await _mcp_call("get_addresses", {"page": 1, "pageSize": 10})
+async def swiggy_addresses(user: dict = Depends(require_current_user)):
+    result = await _mcp_call("get_addresses", {"page": 1, "pageSize": 10}, user["id"])
     data = result.get("data", result)
     return {"addresses": data.get("addresses", []), "pagination": data.get("pagination")}
 
 
 class SwiggyOrdersRequest(BaseModel):
-    address_id: str
+    address_id: str = Field(min_length=1, max_length=128)
 
 
 @app.post("/api/swiggy/orders")
-async def swiggy_orders(request: SwiggyOrdersRequest):
+async def swiggy_orders(request: SwiggyOrdersRequest, user: dict = Depends(require_current_user)):
+    enforce_user_rate_limit(user["id"], "swiggy-orders", 30)
     address_id = request.address_id.strip()
     if not address_id:
         raise HTTPException(status_code=400, detail="Choose a saved Swiggy address first.")
-    result = await _mcp_call("get_food_orders", {"addressId": address_id})
+    result = await _mcp_call("get_food_orders", {"addressId": address_id}, user["id"])
     data = result.get("data", result)
     return {"orders": data.get("orders", []), "status_message": data.get("statusMessage")}
 
@@ -1434,8 +1618,8 @@ async def swiggy_orders(request: SwiggyOrdersRequest):
 # ============================================================
 
 class SwiggyOrderDetailsRequest(BaseModel):
-    order_id: str
-    order: dict[str, Any] | None = None
+    order_id: str = Field(min_length=1, max_length=128)
+    order: dict[str, Any] | None = Field(default=None, max_length=100)
 
 def _normalize_order_id(value) -> str:
     if value is None:
@@ -1746,7 +1930,8 @@ def _extract_order_items(order: dict) -> list:
 
 @app.post("/api/swiggy/order-details")
 async def swiggy_order_details(
-    request: SwiggyOrderDetailsRequest
+    request: SwiggyOrderDetailsRequest,
+    user: dict = Depends(require_current_user),
 ):
     order_id = request.order_id.strip()
 
@@ -1766,6 +1951,7 @@ async def swiggy_order_details(
             {
                 "orderId": order_id,
             },
+            user["id"],
         )
 
         order = _find_order_object(
@@ -1774,11 +1960,6 @@ async def swiggy_order_details(
         )
 
         if isinstance(order, dict):
-
-            print(
-                "SWIGGY ORDER DETAILS VERIFIED:",
-                order_id,
-            )
 
             items = _extract_order_items(order)
 
@@ -1815,11 +1996,7 @@ async def swiggy_order_details(
             }
 
     except Exception as exc:
-
-        print(
-            "SWIGGY ORDER DETAILS FALLBACK:",
-            type(exc).__name__,
-        )
+        logger.warning("Swiggy order lookup failed (%s)", type(exc).__name__)
 
     # ============================================================
     # FALLBACK:
@@ -1886,20 +2063,6 @@ async def swiggy_order_details(
                             }
                         )
 
-            print(
-                "SWIGGY ORDER VERIFIED FROM ORDER HISTORY:",
-                {
-                    "order_id": order_id,
-                    "restaurant": (
-                        candidate.get("restaurantName")
-                    ),
-                    "status": (
-                        candidate.get("orderStatus")
-                    ),
-                    "item_count": len(items),
-                },
-            )
-
             return {
                 "success": True,
                 "verified": True,
@@ -1964,17 +2127,18 @@ async def swiggy_order_details(
     )
 
 @app.post("/api/swiggy/disconnect")
-async def swiggy_disconnect():
-    if SWIGGY_ACCESS_TOKEN:
+async def swiggy_disconnect(user: dict = Depends(require_current_user)):
+    session = await _load_swiggy_session(user["id"])
+    if session:
         async with httpx.AsyncClient(timeout=15) as client:
             try:
                 await client.post(
                     f"{SWIGGY_BASE_URL}/auth/logout",
-                    headers={"Authorization": f"Bearer {SWIGGY_ACCESS_TOKEN}"},
+                    headers={"Authorization": f"Bearer {session[0]}"},
                 )
             except httpx.HTTPError:
                 pass
-    _clear_swiggy_session()
+    await _clear_swiggy_session(user["id"])
     return {"connected": False}
 
 
@@ -1983,9 +2147,11 @@ async def swiggy_disconnect():
 # ============================================================
 
 @app.post("/api/analyze")
-def analyze_complaint(
-    request: ComplaintRequest
+async def analyze_complaint(
+    request: ComplaintRequest,
+    user: dict = Depends(require_current_user),
 ):
+    enforce_user_rate_limit(user["id"], "complaint-analysis", 20)
 
     try:
 
@@ -1998,19 +2164,16 @@ def analyze_complaint(
                 "error": "Complaint message is empty.",
             }
 
-        print("")
-        print("================================")
-        print("ANALYZING COMPLAINT")
-        print("================================")
-        print(message)
-
         # ----------------------------------------------------
         # AI UNDERSTANDING
         # ----------------------------------------------------
 
-        result = analyze_with_ai(
+        swiggy_session = await _load_swiggy_session(user["id"])
+        result = await asyncio.to_thread(
+            analyze_with_ai,
             message,
             request.conversation,
+            bool(swiggy_session),
         )
 
         # ----------------------------------------------------
@@ -2066,9 +2229,7 @@ def analyze_complaint(
         elif (
             result.get("platform")
             == "swiggy"
-            and SWIGGY_ACCESS_TOKEN
-            and time.time()
-            < SWIGGY_TOKEN_EXPIRES_AT
+            and swiggy_session
         ):
 
             next_step = "order_matching"
@@ -2088,15 +2249,6 @@ def analyze_complaint(
         # LOG
         # ----------------------------------------------------
 
-        print("")
-        print("ANALYSIS RESULT:")
-        print(result)
-
-        print(
-            "NEXT STEP:",
-            next_step,
-        )
-
         # ----------------------------------------------------
         # RESPONSE
         # ----------------------------------------------------
@@ -2108,18 +2260,16 @@ def analyze_complaint(
             "next_step": next_step,
         }
 
+    except HTTPException:
+        raise
+
     except builtins.Exception as e:
 
-        print(
-            "AI ANALYSIS ERROR:",
-            repr(e),
-        )
+        logger.warning("Complaint analysis failed (%s)", type(e).__name__)
 
         return {
             "success": False,
-            "message": request.message,
             "error": "AI analysis failed",
-            "details": str(e),
         }
 
 
@@ -2131,7 +2281,9 @@ def analyze_complaint(
 async def transcribe_audio(
     file: UploadFile = File(...),
     language_code: str = Form("en-IN"),
+    user: dict = Depends(require_current_user),
 ):
+    enforce_user_rate_limit(user["id"], "voice-transcription", 10)
 
     temp_path = None
 
@@ -2141,27 +2293,13 @@ async def transcribe_audio(
         # RECEIVE AUDIO
         # ----------------------------------------------------
 
-        audio_bytes = await file.read()
-
-        print("")
-        print("================================")
-        print("VOICE INPUT")
-        print("================================")
-
-        print(
-            "VOICE: RECEIVED AUDIO BYTES:",
-            len(audio_bytes)
-        )
-
-        print(
-            "VOICE: ORIGINAL FILENAME:",
-            file.filename
-        )
-
-        print(
-            "VOICE: CONTENT TYPE:",
-            file.content_type
-        )
+        max_size = 25 * 1024 * 1024
+        if file.size is not None and file.size > max_size:
+            raise HTTPException(
+                status_code=413,
+                detail="Audio file is too large. Please record a shorter message.",
+            )
+        audio_bytes = await file.read(max_size + 1)
 
 
         # ----------------------------------------------------
@@ -2176,19 +2314,11 @@ async def transcribe_audio(
             }
 
 
-        # 25 MB maximum
-
-        max_size = 25 * 1024 * 1024
-
         if len(audio_bytes) > max_size:
-
-            return {
-                "success": False,
-                "error": (
-                    "Audio file is too large. "
-                    "Please record a shorter message."
-                ),
-            }
+            raise HTTPException(
+                status_code=413,
+                detail="Audio file is too large. Please record a shorter message.",
+            )
 
 
         # Gnani Prisma REST accepts audio clips up to 60 seconds and returns
@@ -2238,10 +2368,9 @@ async def transcribe_audio(
             except HTTPException:
                 raise
             except (httpx.HTTPError, ValueError, av.error.FFmpegError, StopIteration) as error:
-                print("Gnani Prisma transcription failed; falling back to local Whisper:", repr(error))
+                logger.warning("Gnani transcription failed (%s); using local fallback", type(error).__name__)
             except Exception as error:
-                print("Gnani Prisma audio processing failed; falling back to local Whisper:", repr(error))
-            print("Gnani Prisma unavailable; falling back to local Whisper.")
+                logger.warning("Gnani audio processing failed (%s); using local fallback", type(error).__name__)
 
 
         # ----------------------------------------------------
@@ -2258,12 +2387,6 @@ async def transcribe_audio(
             )
 
             temp_path = temp_file.name
-
-
-        print(
-            "VOICE: TEMP FILE:",
-            temp_path
-        )
 
 
         # ----------------------------------------------------
@@ -2334,22 +2457,6 @@ async def transcribe_audio(
         )
 
 
-        print(
-            "VOICE LANGUAGE:",
-            detected_language
-        )
-
-        print(
-            "VOICE LANGUAGE PROBABILITY:",
-            language_probability
-        )
-
-        print(
-            "VOICE TRANSCRIPT:",
-            transcript
-        )
-
-
         # ----------------------------------------------------
         # EMPTY TRANSCRIPT
         # ----------------------------------------------------
@@ -2385,12 +2492,12 @@ async def transcribe_audio(
         }
 
 
+    except HTTPException:
+        raise
+
     except builtins.Exception as e:
 
-        print(
-            "TRANSCRIPTION ERROR:",
-            repr(e)
-        )
+        logger.warning("Voice transcription failed (%s)", type(e).__name__)
 
         return {
 
@@ -2398,9 +2505,6 @@ async def transcribe_audio(
 
             "error":
                 "Voice transcription failed.",
-
-            "details":
-                str(e),
 
         }
 
@@ -2430,12 +2534,13 @@ async def transcribe_audio(
 
 class SynthesizeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
-    language: str = "auto"
-    voice: str = "Kaveri"
+    language: Literal["auto", "hi-IN", "en-IN", "ta-IN", "te-IN", "kn-IN", "ml-IN", "mr-IN", "pa-IN", "bn-IN", "gu-IN", "hi-en"] = "auto"
+    voice: Literal["Kaveri", "Nalini"] = "Kaveri"
 
 
 @app.post("/api/voice/synthesize")
-async def synthesize_voice(request: SynthesizeRequest):
+async def synthesize_voice(request: SynthesizeRequest, user: dict = Depends(require_current_user)):
+    enforce_user_rate_limit(user["id"], "voice-synthesis", 30)
     if not GNANI_TTS_ENABLED or not GNANI_API_KEY:
         raise HTTPException(status_code=503, detail="Gnani Timbre TTS is not enabled on this server.")
     allowed_languages = {"auto", "hi-IN", "en-IN", "ta-IN", "te-IN", "kn-IN", "ml-IN", "mr-IN", "pa-IN", "bn-IN", "gu-IN", "hi-en"}
@@ -2448,14 +2553,18 @@ async def synthesize_voice(request: SynthesizeRequest):
         "language": request.language,
         "audio_config": {"sample_rate": 24000, "num_channels": 1, "sample_width": 2, "encoding": "linear_pcm", "container": "wav"},
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            "https://api.vachana.ai/api/v1/tts/inference",
-            headers={"X-API-Key-ID": GNANI_API_KEY, "Content-Type": "application/json"},
-            json=payload,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                "https://api.vachana.ai/api/v1/tts/inference",
+                headers={"X-API-Key-ID": GNANI_API_KEY, "Content-Type": "application/json"},
+                json=payload,
+            )
+    except httpx.HTTPError as error:
+        logger.warning("Gnani synthesis failed (%s)", type(error).__name__)
+        raise HTTPException(status_code=502, detail="Gnani Timbre synthesis failed.") from error
     if response.is_error or not response.content:
-        raise HTTPException(status_code=502, detail=f"Gnani Timbre synthesis failed ({response.status_code}).")
+        raise HTTPException(status_code=502, detail="Gnani Timbre synthesis failed.")
     return Response(content=response.content, media_type="audio/wav")
 
 

@@ -24,6 +24,7 @@ ResolveAI reduces that interaction cost:
 - **Order-history verification** before showing an order-specific resolution workflow.
 - **Multilingual UI adaptation** based on the language detected from the user's input.
 - **Complaint history and solved-problem views** stored locally in the browser for the current MVP.
+- **Account sign-in and private complaint history** using Supabase Auth and owner-scoped Postgres row-level security.
 - **In-app settings** for profile information, themes and custom wallpaper.
 - **Mobile-first interface** designed around simple, low-friction interactions.
 
@@ -146,6 +147,24 @@ pip install -r requirements.txt
 ```
 
 Create a local `.env` from `.env.example` and add your own credentials.
+
+#### Supabase account setup
+
+1. Create a Supabase project and enable email sign-in. In **Authentication → URL Configuration**, add `http://localhost:5173` and your deployed frontend URL to the allowed redirect URLs.
+2. In **Authentication → Signing Keys**, use an asymmetric ES256 or RS256 signing key. The backend verifies user access tokens against Supabase's public JWKS endpoint.
+3. Run `backend/migrations/001_user_scoped_swiggy_sessions.sql` and `backend/migrations/002_user_complaint_history.sql` in the Supabase SQL Editor.
+4. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `frontend/.env`. The anon key is public and may be included in the frontend; never put a service role or secret key in a `VITE_` variable.
+5. Set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SWIGGY_TOKEN_ENCRYPTION_KEY` in `backend/.env`. The service role key must stay server-side. Generate a Fernet encryption key with:
+
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+6. Add the matching Supabase URL and anon key as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` on the frontend host. Add the Supabase URL, server-only service role key and encryption key to the backend host. `render.yaml` declares these variables so Render prompts for values at deploy time.
+
+Complaint history is stored in Postgres under the signed-in user's ID and protected by row-level security. The browser also keeps an account-scoped local copy for offline continuity. Swiggy access tokens and OAuth PKCE state are encrypted in Postgres and accessible only to the backend service role. Rotating the encryption key without re-encrypting stored values will require users to reconnect Swiggy.
+
+The backend also applies per-account request limits to complaint analysis, voice, and order retrieval. These limits are in-process safeguards; configure a shared gateway/WAF rate limit before running multiple backend instances.
 
 Start FastAPI:
 
