@@ -2241,6 +2241,10 @@ function App() {
       setVoiceError("Read-aloud needs a signed-in session in this demo.");
       return;
     }
+    if (!orderConfirmed || !selectedSwiggyOrderDetails) {
+      setVoiceError("Confirm the correct Swiggy order before preparing a support request.");
+      return;
+    }
     const order =
       matchedSwiggyOrder ||
       selectedSwiggyOrderDetails ||
@@ -2324,6 +2328,24 @@ function App() {
   }
 
   function prepareSwiggySupportRequest(type) {
+    if (isGuest) {
+      setResolutionResult({
+        type: "info",
+        title: "Sign in to prepare a real-order request",
+        message: "Guest mode only shows sample guidance. Sign in, connect Swiggy, and confirm the correct order first. Nothing has been submitted.",
+        icon: "🧪",
+      });
+      return;
+    }
+    if (!orderConfirmed || !selectedSwiggyOrderDetails) {
+      setResolutionResult({
+        type: "info",
+        title: "Confirm your order first",
+        message: "Choose the correct Swiggy order and click “Yes, this is my order” before preparing a support request. Nothing has been submitted.",
+        icon: "🔐",
+      });
+      return;
+    }
     const order =
       matchedSwiggyOrder ||
       selectedSwiggyOrderDetails ||
@@ -2357,7 +2379,7 @@ function App() {
       {
         role: "agent",
         text:
-          `📱 Swiggy support request prepared:\n\n${requestText}`,
+          `📱 Swiggy support request draft (not submitted):\n\n${requestText}\n\nPlease copy this message into Swiggy Support. ResolveAI has not submitted the request or received a resolution confirmation.`,
         time: new Date().toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
@@ -2437,6 +2459,18 @@ function App() {
     return;
   }
   
+  if (value === "refund" || value === "replacement") {
+    if (!orderConfirmed || !selectedSwiggyOrderDetails) {
+      setResolutionResult({
+        type: "info",
+        title: "Confirm your order first",
+        message: "Choose the correct Swiggy order, review its details, and click “Yes, this is my order” before preparing a refund or missing-item request. Nothing has been submitted.",
+        icon: "🔐",
+      });
+      return;
+    }
+  }
+
   if (value === "refund") {
   setResolutionResult({
     type: "loading",
