@@ -55,6 +55,8 @@ if not API_KEY:
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=API_KEY,
+    timeout=25.0,
+    max_retries=1,
 )
 
 
@@ -77,6 +79,39 @@ whisper_model = WhisperModel(
     device="cpu",
     compute_type="int8",
 )
+
+# Keep expensive work bounded per backend process. Requests that arrive while
+# all slots are occupied are rejected quickly instead of building an unlimited
+# queue that can exhaust the small Render instance.
+AI_CONCURRENCY = max(1, int(os.getenv("AI_CONCURRENCY", "4")))
+ai_slots = asyncio.Semaphore(AI_CONCURRENCY)
+whisper_slots = asyncio.Semaphore(1)
+CAPACITY_WAIT_SECONDS = max(0.1, float(os.getenv("CAPACITY_WAIT_SECONDS", "3")))
+
+
+async def run_with_capacity(semaphore: asyncio.Semaphore, operation, *args):
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=CAPACITY_WAIT_SECONDS)
+    except asyncio.TimeoutError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="ResolveAI is handling several requests right now. Please retry shortly.",
+            headers={"Retry-After": "5"},
+        ) from error
+
+    task = asyncio.create_task(asyncio.to_thread(operation, *args))
+    release_after_request = True
+    try:
+        # Shield the worker so a disconnected browser cannot free capacity
+        # while the CPU-bound or provider call is still running in its thread.
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        release_after_request = False
+        task.add_done_callback(lambda _finished: semaphore.release())
+        raise
+    finally:
+        if release_after_request:
+            semaphore.release()
 
 print("Whisper model loaded successfully.")
 
@@ -125,10 +160,12 @@ SUPABASE_JWKS = (
 bearer_scheme = HTTPBearer(auto_error=False)
 _rate_limit_buckets: dict[str, deque[float]] = defaultdict(deque)
 _rate_limit_lock = threading.Lock()
+_rate_limit_last_cleanup = 0.0
 
 
 def enforce_user_rate_limit(user_id: str, scope: str, limit: int, window_seconds: int = 60):
     """Apply a small per-account abuse limit to expensive authenticated operations."""
+    global _rate_limit_last_cleanup
     now = time.monotonic()
     key = f"{user_id}:{scope}"
     with _rate_limit_lock:
@@ -143,7 +180,7 @@ def enforce_user_rate_limit(user_id: str, scope: str, limit: int, window_seconds
                 headers={"Retry-After": str(retry_after)},
             )
         bucket.append(now)
-        if len(_rate_limit_buckets) > 10000:
+        if len(_rate_limit_buckets) > 10000 or now - _rate_limit_last_cleanup >= 60:
             expired = [
                 bucket_key
                 for bucket_key, values in _rate_limit_buckets.items()
@@ -151,6 +188,7 @@ def enforce_user_rate_limit(user_id: str, scope: str, limit: int, window_seconds
             ]
             for bucket_key in expired:
                 _rate_limit_buckets.pop(bucket_key, None)
+            _rate_limit_last_cleanup = now
 
 
 def require_current_user(
@@ -1481,6 +1519,28 @@ Never claim that a refund has already happened.
     return result
 
 
+def _transcribe_with_whisper(temp_path: str) -> dict[str, Any]:
+    """Run synchronous Whisper decoding outside the async request loop."""
+    segments, info = whisper_model.transcribe(
+        temp_path,
+        task="transcribe",
+        beam_size=5,
+        vad_filter=False,
+        condition_on_previous_text=False,
+        temperature=0,
+    )
+    transcript = " ".join(
+        segment.text.strip()
+        for segment in segments
+        if segment.text.strip()
+    ).strip()
+    return {
+        "text": transcript,
+        "language": info.language,
+        "language_probability": round(info.language_probability, 3),
+    }
+
+
 # ============================================================
 # ROOT
 # ============================================================
@@ -2188,7 +2248,8 @@ async def analyze_complaint(
                 "Swiggy session lookup unavailable; continuing without order data"
             )
             swiggy_session = None
-        result = await asyncio.to_thread(
+        result = await run_with_capacity(
+            ai_slots,
             analyze_with_ai,
             message,
             request.conversation,
@@ -2282,14 +2343,13 @@ async def analyze_complaint(
     except HTTPException:
         raise
 
-    except builtins.Exception as e:
-
-        logger.warning("Complaint analysis failed (%s)", type(e).__name__)
-
-        return {
-            "success": False,
-            "error": "AI analysis failed",
-        }
+    except builtins.Exception as error:
+        logger.warning("Complaint analysis failed (%s)", type(error).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail="Complaint analysis is temporarily unavailable. Please retry shortly.",
+            headers={"Retry-After": "10"},
+        ) from error
 
 
 # ============================================================
@@ -2417,63 +2477,14 @@ async def transcribe_audio(
         )
 
 
-        segments, info = whisper_model.transcribe(
-
+        whisper_result = await run_with_capacity(
+            whisper_slots,
+            _transcribe_with_whisper,
             temp_path,
-
-            # Transcribe in the spoken language; never translate speech.
-            task="transcribe",
-
-            # Beam search improves decoding quality.
-            beam_size=5,
-
-            # Disable VAD while debugging.
-            # This prevents Whisper from accidentally
-            # removing quiet speech.
-            vad_filter=False,
-
-            # Prevent previous decoding mistakes from
-            # influencing the next segment.
-            condition_on_previous_text=False,
-
-            # Deterministic decoding.
-            temperature=0,
-
         )
-
-
-        # ----------------------------------------------------
-        # COLLECT TRANSCRIPT
-        # ----------------------------------------------------
-
-        transcript_parts = []
-
-        for segment in segments:
-
-            text = segment.text.strip()
-
-            if text:
-
-                transcript_parts.append(
-                    text
-                )
-
-
-        transcript = " ".join(
-            transcript_parts
-        ).strip()
-
-
-        # ----------------------------------------------------
-        # WHISPER LANGUAGE INFORMATION
-        # ----------------------------------------------------
-
-        detected_language = info.language
-
-        language_probability = round(
-            info.language_probability,
-            3
-        )
+        transcript = whisper_result["text"]
+        detected_language = whisper_result["language"]
+        language_probability = whisper_result["language_probability"]
 
 
         # ----------------------------------------------------
@@ -2514,18 +2525,13 @@ async def transcribe_audio(
     except HTTPException:
         raise
 
-    except builtins.Exception as e:
-
-        logger.warning("Voice transcription failed (%s)", type(e).__name__)
-
-        return {
-
-            "success": False,
-
-            "error":
-                "Voice transcription failed.",
-
-        }
+    except builtins.Exception as error:
+        logger.warning("Voice transcription failed (%s)", type(error).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail="Voice transcription is temporarily unavailable. Please try again or type your message.",
+            headers={"Retry-After": "10"},
+        ) from error
 
 
     finally:

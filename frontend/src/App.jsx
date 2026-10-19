@@ -119,12 +119,24 @@ function App() {
     event.preventDefault();
     setAuthBusy(true);
     setAuthNotice("");
-    const { error } = await supabase.auth.signInWithOtp({
-      email: authEmail.trim(),
-      options: { emailRedirectTo: window.location.origin },
-    });
-    setAuthNotice(error ? "We couldn't send the sign-in link. Check your email and try again." : "Check your email for a secure sign-in link.");
-    setAuthBusy(false);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: authEmail.trim(),
+        options: { emailRedirectTo: window.location.origin },
+      });
+      const messages = {
+        email_address_not_authorized: "Supabase's test email service only sends to project team members. Configure custom SMTP to send sign-in links to app users.",
+        over_email_send_rate_limit: "Too many sign-in emails were requested. Wait before trying again, or configure custom SMTP for reliable delivery.",
+        email_provider_disabled: "Email sign-in is disabled for this project. Enable the Email provider in Supabase Authentication settings.",
+      };
+      setAuthNotice(error
+        ? messages[error.code] || "We couldn't send the sign-in link. Check the Supabase email provider, SMTP settings, and redirect URL, then try again."
+        : "Check your email for a secure sign-in link.");
+    } catch {
+      setAuthNotice("We couldn't reach the sign-in service. Check your connection and try again.");
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   async function apiFetch(path, options = {}) {
@@ -134,7 +146,26 @@ function App() {
     const requestAccountGeneration = accountGeneration.current;
     const headers = new Headers(options.headers || {});
     headers.set("Authorization", `Bearer ${accessToken}`);
-    const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    const { timeoutMs, signal, ...fetchOptions } = options;
+    const requestTimeoutMs = timeoutMs ?? (path.includes("/api/transcribe") ? 90_000 : 45_000);
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abortFromCaller();
+    else signal?.addEventListener("abort", abortFromCaller, { once: true });
+    const timeoutId = window.setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), requestTimeoutMs);
+    let response;
+    try {
+      response = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.reason?.name === "TimeoutError") {
+        throw new Error("The service is taking longer than expected. Please retry in a moment.");
+      }
+      if (error?.name === "AbortError") throw new Error("The request was cancelled. Please try again.");
+      throw new Error("Could not reach ResolveAI. Check your connection and try again.");
+    } finally {
+      window.clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", abortFromCaller);
+    }
     if (requestAccountGeneration !== accountGeneration.current) throw new Error("Your account changed. Please retry your request.");
     return response;
   }
@@ -1308,6 +1339,7 @@ function App() {
       if (!data?.success) {
 
         throw new Error(
+          data?.detail ||
           data?.details ||
           data?.error ||
           "AI analysis failed."
@@ -1674,6 +1706,8 @@ function App() {
       if (!response.ok || !data.success) {
 
         throw new Error(
+
+          data.detail ||
 
           data.details ||
 
