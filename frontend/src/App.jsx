@@ -120,6 +120,22 @@ function App() {
     return () => { alive = false; subscription.unsubscribe(); };
   }, []);
 
+  async function signInWithGoogle() {
+    if (!supabaseConfigured) return;
+    setAuthBusy(true);
+    setAuthNotice("");
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin },
+      });
+      if (error) throw error;
+    } catch {
+      setAuthNotice("Google sign-in couldn't start. Make sure Google is enabled in Supabase Authentication and its OAuth credentials and redirect URLs are configured.");
+      setAuthBusy(false);
+    }
+  }
+
   async function sendSignInLink(event) {
     event.preventDefault();
     setAuthBusy(true);
@@ -2582,7 +2598,10 @@ function App() {
         <section className="card w-full max-w-md border border-base-300 bg-base-100 shadow-xl">
           <div className="card-body gap-5">
             <div><p className="text-sm font-bold uppercase tracking-widest text-primary">ResolveAI</p><h1 className="mt-2 text-3xl font-black">Your support, securely</h1><p className="mt-2 text-sm opacity-70">Sign in to keep your conversations and connected orders private to your account.</p></div>
-            {!supabaseConfigured ? <div role="alert" className="alert alert-warning text-sm">Sign-in is not configured yet. Add the Supabase project URL and public anon key to the frontend environment.</div> : authLoading ? <p role="status">Checking your sign-in…</p> : <form className="space-y-4" onSubmit={sendSignInLink}><label className="form-control w-full"><span className="label-text mb-2 font-semibold">Email address</span><input className="input input-bordered w-full" type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@example.com" /></label><button className="btn btn-primary w-full" type="submit" disabled={authBusy}>{authBusy ? "Sending link…" : "Send secure sign-in link"}</button></form>}
+            {!supabaseConfigured ? <div role="alert" className="alert alert-warning text-sm">Sign-in is not configured yet. Add the Supabase project URL and public anon key to the frontend environment.</div> : authLoading ? <p role="status">Checking your sign-in…</p> : <button type="button" className="btn w-full border border-base-300 bg-base-100 text-base-content hover:bg-base-200" onClick={signInWithGoogle} disabled={authBusy}>
+              <svg aria-hidden="true" viewBox="0 0 48 48" className="h-5 w-5"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.01 13.22l7.98 6.19C11.93 13.72 17.46 9.5 24 9.5Z" transform="translate(0 4)"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.76 7.18l7.73 6C44.42 37.95 46.98 31.8 46.98 24.55Z" transform="translate(0 0)"/><path fill="#FBBC05" d="M9.99 28.59A14.4 14.4 0 0 1 9.2 24c0-1.59.27-3.13.76-4.59l-7.98-6.19A23.9 23.9 0 0 0 0 24c0 3.87.93 7.52 2.58 10.78l7.41-6.19Z" transform="translate(0 0)"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.91-5.8l-7.73-6c-2.14 1.44-4.88 2.3-8.18 2.3-6.54 0-12.07-4.22-14.01-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48Z" transform="translate(0 0)"/></svg>
+              {authBusy ? "Connecting to Google…" : "Continue with Google"}
+            </button>}
             {authNotice && <p className="text-sm" role="status">{authNotice}</p>}
             {!authLoading && <div className="space-y-3 border-t border-base-300 pt-4">
               <button type="button" className="btn btn-outline w-full" onClick={() => { setIsGuest(true); setAuthNotice(""); setMessages([{ role: "agent", text: "Welcome to ResolveAI's guest demo. Try a sample complaint such as “My food item was missing” or “My delivery was late.” This demo uses sample guidance only; it does not access real orders or submit a real refund/replacement request.", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]); }}>
