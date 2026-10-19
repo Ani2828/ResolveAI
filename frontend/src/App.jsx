@@ -1273,20 +1273,9 @@ function App() {
     return () => { window.removeEventListener("storage", syncPreferences); window.removeEventListener("resolveai-theme-change", syncPreferences); };
   }, [accountId]);
 
-  useEffect(() => {
-    if (resolutionResult?.type !== "success" || !problemHistory.length) return;
-    if (problemHistory[0]?.status === "solved") return;
-    const updated = problemHistory.map((item, index) =>
-      index === 0 ? { ...item, status: "solved" } : item
-    );
-    setProblemHistory(updated);
-    localStorage.setItem(`resolveai_problem_history:${accountId}`, JSON.stringify(updated));
-    const solvedComplaint = updated[0];
-    if (solvedComplaint?.id && accountId) {
-      void supabase.from("resolveai_complaints").update({ status: "solved" })
-        .eq("id", solvedComplaint.id).eq("user_id", accountId);
-    }
-  }, [resolutionResult]);
+  // Do not infer that a complaint is solved from a generic UI success.
+  // Current success states include read-only order lookups and refund-option checks;
+  // no connected Swiggy action confirms that a refund/replacement was completed.
 
   useEffect(() => {
 
