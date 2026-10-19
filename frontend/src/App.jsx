@@ -42,6 +42,7 @@ function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authNotice, setAuthNotice] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [isGuest, setIsGuest] = useState(false);
   const accountId = authSession?.user?.id || "";
   const previousAccountId = useRef(null);
   const accountGeneration = useRef(0);
@@ -634,6 +635,11 @@ function App() {
 
 
   async function connectSwiggy() {
+
+    if (isGuest) {
+      setSwiggyError("Guest demo uses sample data only. Sign in to connect your real Swiggy account and orders.");
+      return;
+    }
 
     setSwiggyLoading(true);
 
@@ -1289,6 +1295,44 @@ function App() {
 
     try {
 
+      if (isGuest) {
+        const lower = text.toLowerCase();
+        const issue = lower.includes("missing") ? "missing_item"
+          : lower.includes("late") || lower.includes("delay") ? "delivery_delay"
+          : lower.includes("refund") ? "refund_request"
+          : "order_issue";
+        const demoReply = "This is a guest demo, so I'm not accessing real orders or contacting the platform. I can help you describe the issue and explain what to check next. For a real order lookup or account-specific resolution, sign in and connect the relevant service.";
+        const demoAnalysis = {
+          success: true,
+          platform: "demo",
+          issue,
+          requested_action: lower.includes("refund") ? "refund" : lower.includes("missing") ? "replacement" : "information",
+          language: "en",
+          product: "sample item",
+          reply: demoReply,
+          demo: true,
+        };
+        setAnalysis(demoAnalysis);
+        const guestRecord = {
+          id: crypto.randomUUID(),
+          text,
+          language: "en",
+          platform: "demo",
+          issue,
+          action: demoAnalysis.requested_action,
+          status: "demo_only",
+          createdAt: new Date().toISOString(),
+        };
+        const guestHistory = [guestRecord, ...problemHistory].slice(0, 30);
+        setProblemHistory(guestHistory);
+        localStorage.setItem("resolveai_guest_demo_history", JSON.stringify(guestHistory));
+        setMessages((current) => [
+          ...current,
+          { role: "agent", text: "🧪 DEMO MODE — sample guidance only.\n\n" + demoReply, time: now },
+        ]);
+        return;
+      }
+
       const response = await apiFetch(
         "/api/analyze",
         {
@@ -1644,6 +1688,11 @@ function App() {
 
 
   async function transcribeAudio(audioBlob, mimeType) {
+
+    if (isGuest) {
+      setVoiceError("Voice transcription needs a signed-in session in this demo. You can type a sample complaint as a guest.");
+      return;
+    }
 
     const requestAccountGeneration = accountGeneration.current;
 
@@ -2264,6 +2313,24 @@ function App() {
   async function handleHelpSelection(value) {
   setSelectedHelp(value);
 
+  if (isGuest) {
+    setResolutionResult({
+      type: "info",
+      title: "Guest demo guidance",
+      message: "This is sample guidance only. ResolveAI has not checked a real order or submitted a refund/replacement request. Sign in and connect your shopping account to use account-specific resolution features.",
+      icon: "🧪",
+    });
+    setMessages((current) => [
+      ...current,
+      {
+        role: "agent",
+        text: "Guest demo: this is a sample next step only. No real order was checked and no request was submitted.",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      },
+    ]);
+    return;
+  }
+
   // --------------------------------------------------
   // INFORMATION: perform the real Swiggy lookup
   // --------------------------------------------------
@@ -2444,19 +2511,26 @@ function App() {
 
   return (
     <>
-    {(!supabaseConfigured || authLoading || !authSession) ? (
+    {(!isGuest && (!supabaseConfigured || authLoading || !authSession)) ? (
       <main className="grid min-h-screen place-items-center bg-base-200 px-4 py-10">
         <section className="card w-full max-w-md border border-base-300 bg-base-100 shadow-xl">
           <div className="card-body gap-5">
             <div><p className="text-sm font-bold uppercase tracking-widest text-primary">ResolveAI</p><h1 className="mt-2 text-3xl font-black">Your support, securely</h1><p className="mt-2 text-sm opacity-70">Sign in to keep your conversations and connected orders private to your account.</p></div>
             {!supabaseConfigured ? <div role="alert" className="alert alert-warning text-sm">Sign-in is not configured yet. Add the Supabase project URL and public anon key to the frontend environment.</div> : authLoading ? <p role="status">Checking your sign-in…</p> : <form className="space-y-4" onSubmit={sendSignInLink}><label className="form-control w-full"><span className="label-text mb-2 font-semibold">Email address</span><input className="input input-bordered w-full" type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@example.com" /></label><button className="btn btn-primary w-full" type="submit" disabled={authBusy}>{authBusy ? "Sending link…" : "Send secure sign-in link"}</button></form>}
             {authNotice && <p className="text-sm" role="status">{authNotice}</p>}
+            {!authLoading && <div className="space-y-3 border-t border-base-300 pt-4">
+              <button type="button" className="btn btn-outline w-full" onClick={() => { setIsGuest(true); setAuthNotice(""); setMessages([{ role: "agent", text: "Welcome to ResolveAI's guest demo. Try a sample complaint such as “My food item was missing” or “My delivery was late.” This demo uses sample guidance only; it does not access real orders or submit a real refund/replacement request.", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]); }}>
+                Continue as Guest
+              </button>
+              <p className="text-xs opacity-70">Guest mode uses sample guidance only. Sign in to access private history and connect real orders.</p>
+            </div>}
           </div>
         </section>
       </main>
     ) : (
     
     <div className="resolveai-app min-h-screen bg-base-200/80 text-base-content">
+      {isGuest && <div className="alert alert-info mx-auto mt-3 max-w-5xl" role="status"><span><strong>Guest demo:</strong> sample guidance only. Real order lookup, account history, and Swiggy actions require sign-in.</span><button type="button" className="btn btn-sm btn-outline" onClick={() => { setIsGuest(false); setMessages(initialMessages); setAnalysis(null); setProblemHistory([]); }}>Exit guest mode</button></div>}
 
       <div className="drawer lg:drawer-open">
 
