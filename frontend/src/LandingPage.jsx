@@ -34,19 +34,19 @@ function SupportSlip() {
 }
 
 export default function LandingPage({ name = "", email = "", isGuest = false, onStart, onSignOut }) {
-  const [intro, setIntro] = useState(() => {
-    try { return sessionStorage.getItem("resolveai_landing_intro_seen") !== "yes"; } catch { return false; }
-  });
+  const [intro, setIntro] = useState(true);
   const startButton = useRef(null);
 
   useEffect(() => {
-    if (!intro) startButton.current?.focus({ preventScroll: true });
+    if (!intro) {
+      startButton.current?.focus({ preventScroll: true });
+      return;
+    }
+    const timeout = window.setTimeout(() => setIntro(false), 1800);
+    return () => window.clearTimeout(timeout);
   }, [intro]);
 
-  const finishIntro = () => {
-    try { sessionStorage.setItem("resolveai_landing_intro_seen", "yes"); } catch {}
-    setIntro(false);
-  };
+  const finishIntro = () => setIntro(false);
   const firstName = name.trim().split(/\\s+/)[0] || email.split("@")[0];
 
   return <div className="ra-landing-shell">
