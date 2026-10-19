@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+
+.ra-landing-shell { --ra-ink:#0f2540; --ra-ink-deep:#07182c; --ra-paper:#f1f5f3; --ra-slip:#fbfcfa; --ra-green:#0b7a5c; --ra-red:#c2255c; --ra-saffron:#f2b01e; --ra-muted:#44566a; color:var(--ra-ink); background:var(--ra-paper); min-height:100vh; font-family:Inter,system-ui,sans-serif; }
+.ra-landing { min-height:100svh; padding:0 clamp(1.25rem,5vw,4rem) max(3rem,env(safe-area-inset-bottom)); background:var(--ra-paper); }
+.ra-top,.ra-main { max-width:1180px; margin:0 auto; }
+.ra-top { padding:max(1.1rem,env(safe-area-inset-top)) 0 1rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; border-bottom:1px solid #dce5df; }
+.ra-brand { display:flex; align-items:center; gap:.6rem; font:700 1.2rem/1 'Bricolage Grotesque',sans-serif; letter-spacing:-.01em; }
+.ra-logo { width:30px; height:30px; flex:0 0 auto; }
+.ra-top-right { display:flex; align-items:center; gap:1rem; font-size:.92rem; white-space:nowrap; }
+.ra-hello { color:var(--ra-muted); }
+.ra-link { color:var(--ra-ink); text-underline-offset:3px; cursor:pointer; background:transparent; border:0; padding:.35rem .2rem; font-weight:600; text-decoration:underline; }
+.ra-hero { display:grid; grid-template-columns:minmax(0,7fr) minmax(0,5fr); align-items:center; gap:clamp(2rem,5vw,4.5rem); padding:clamp(2rem,6vw,4.5rem) 0; }
+.ra-hero-copy { max-width:36rem; }
+.ra-eyebrow { display:inline-flex; align-items:center; gap:.5rem; color:var(--ra-green); font:600 .72rem/1.4 'IBM Plex Mono',monospace; letter-spacing:.11em; }
+.ra-eyebrow>span { width:8px; height:8px; border-radius:50%; background:var(--ra-green); box-shadow:0 0 0 4px #0b7a5c18; }
+.ra-hero h1 { margin:1rem 0 0; font:800 clamp(2.5rem,6.4vw,4.5rem)/1.02 'Bricolage Grotesque',sans-serif; letter-spacing:-.045em; text-wrap:balance; }
+.ra-hero h1 em { color:var(--ra-green); font-style:normal; }
+.ra-lede { color:var(--ra-muted); max-width:32rem; margin:1.25rem 0 1.75rem; font-size:clamp(1.02rem,1.6vw,1.18rem); line-height:1.65; }
+.ra-btn { display:inline-flex; align-items:center; justify-content:center; gap:1.1rem; min-height:3.25rem; padding:0 1.5rem; border:0; border-radius:.9rem; background:var(--ra-green); color:white; box-shadow:0 3px #075b44; font:700 1.05rem/1 'Bricolage Grotesque',sans-serif; cursor:pointer; transition:transform .12s,box-shadow .12s; }
+.ra-btn:hover { transform:translateY(-2px); box-shadow:0 5px #075b44; }
+.ra-btn:focus-visible,.ra-chip:focus-visible,.ra-link:focus-visible,.ra-intro-skip:focus-visible { outline:3px solid var(--ra-saffron); outline-offset:3px; }
+.ra-fine { color:var(--ra-muted); margin:.9rem 0 0; font-size:.83rem; line-height:1.5; }
+.ra-quick { border-top:2px dashed #b8c6c0; margin-top:2rem; padding-top:1.25rem; }
+.ra-quick>p { color:var(--ra-muted); margin:0 0 .7rem; font-size:.92rem; }
+.ra-chips { display:flex; flex-wrap:wrap; gap:.55rem; }
+.ra-chip { display:inline-flex; align-items:center; gap:.7rem; min-height:2.5rem; padding:0 .9rem; border:1.5px solid var(--ra-ink); border-radius:999px; color:var(--ra-ink); background:transparent; font-size:.88rem; font-weight:600; cursor:pointer; transition:background-color .12s,color .12s,transform .12s; }
+.ra-chip:hover { background:var(--ra-ink); color:white; transform:translateY(-1px); }
+.ra-chip span { color:var(--ra-green); }
+.ra-chip:hover span { color:var(--ra-saffron); }
+.ra-hero-slip { display:grid; place-items:center; padding:1.5rem; position:relative; min-width:0; }
+.ra-tag { position:absolute; inset:7% 4% 4% 10%; border-radius:1.4rem; background:var(--ra-saffron); transform:rotate(-4deg); }
+.ra-slip { position:relative; width:min(100%,390px); padding:1.5rem; background:var(--ra-slip); border:1px solid #d5ded8; border-radius:1rem; box-shadow:0 18px 45px #0f25401c,0 3px 0 #0f25400a; transform:rotate(2.5deg); }
+.ra-slip-head { display:flex; align-items:center; gap:.65rem; }
+.ra-slip-head>div { display:grid; gap:.18rem; }
+.ra-slip-head strong { font:700 .84rem 'Bricolage Grotesque',sans-serif; letter-spacing:.08em; }
+.ra-slip-head span:not(.ra-slip-check) { color:var(--ra-muted); font:500 .58rem 'IBM Plex Mono',monospace; letter-spacing:.12em; }
+.ra-slip-check { display:grid; place-items:center; margin-left:auto; width:29px; height:29px; border-radius:50%; background:#e2f1e9; color:var(--ra-green); font-weight:800; }
+.ra-slip-rule { margin:1.1rem 0; border-top:1px dashed #b8c6c0; }
+.ra-slip-kicker { color:var(--ra-red); font:600 .67rem 'IBM Plex Mono',monospace; letter-spacing:.12em; }
+.ra-slip h3 { margin:.6rem 0 .4rem; font:700 1.65rem/1.15 'Bricolage Grotesque',sans-serif; letter-spacing:-.03em; }
+.ra-slip p { margin:0; color:var(--ra-muted); font-size:.92rem; }
+.ra-slip-status { display:flex; align-items:center; gap:.55rem; margin:1.35rem 0 1rem; padding:.8rem; border-radius:.6rem; background:#eaf4ee; color:#165a43; font-size:.78rem; font-weight:600; }
+.ra-slip-status span { width:8px; height:8px; border-radius:50%; background:var(--ra-green); }
+.ra-slip-bottom { display:flex; justify-content:space-between; gap:.5rem; padding-top:.85rem; border-top:1px solid #e0e6e1; color:#7a8a84; font:500 .58rem 'IBM Plex Mono',monospace; }
+.ra-steps { border-top:2px dashed #b8c6c0; padding:clamp(2rem,5vw,3.5rem) 0; }
+.ra-steps-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:.6rem 1.25rem; }
+.ra-steps h2 { margin:0; font:800 clamp(1.8rem,4vw,2.7rem)/1.1 'Bricolage Grotesque',sans-serif; letter-spacing:-.04em; }
+.ra-steps-heading>p { margin:0; color:var(--ra-muted); }
+.ra-steps ol { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:2rem; list-style:none; padding:2rem 0 0; margin:0; }
+.ra-steps li { border-top:1px solid #cbd7cf; padding-top:1rem; }
+.ra-step-n { display:inline-block; color:var(--ra-green); font:600 .85rem 'IBM Plex Mono',monospace; }
+.ra-steps h3 { margin:.9rem 0 .45rem; font:700 1.15rem 'Bricolage Grotesque',sans-serif; }
+.ra-steps li p { color:var(--ra-muted); line-height:1.6; font-size:.92rem; margin:0; max-width:22rem; }
+.ra-footer { display:flex; align-items:center; flex-wrap:wrap; gap:.7rem 1.25rem; padding-top:1.5rem; border-top:1px solid #dce5df; color:var(--ra-muted); font-size:.8rem; }
+.ra-footer .ra-brand { color:var(--ra-ink); font-size:1rem; }
+.ra-footer .ra-logo { width:25px; height:25px; }
+.ra-footer p { margin:0; }
+.ra-footer>span { margin-left:auto; max-width:27rem; text-align:right; }
+.ra-intro { position:fixed; inset:0; z-index:999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1rem; width:100%; height:100%; border:0; background:var(--ra-ink-deep); color:white; cursor:pointer; animation:ra-intro-in .45s ease both; }
+.ra-intro-mark { display:grid; place-items:center; width:76px; height:76px; border-radius:22px; background:var(--ra-paper); animation:ra-mark-pop .65s cubic-bezier(.2,.8,.2,1) both; }
+.ra-intro-mark .ra-logo { width:52px; height:52px; }
+.ra-intro-word { margin:0; font:800 2.4rem 'Bricolage Grotesque',sans-serif; letter-spacing:-.04em; }
+.ra-intro-skip { position:absolute; right:1.5rem; bottom:1.5rem; color:#dce7e2; font-size:.9rem; text-decoration:underline; text-underline-offset:4px; }
+@keyframes ra-intro-in { from { opacity:0 } to { opacity:1 } }
+@keyframes ra-mark-pop { from { transform:translateY(12px) scale(.85); opacity:0 } to { transform:translateY(0) scale(1); opacity:1 } }
+@media (max-width:760px) { .ra-hero { grid-template-columns:1fr; gap:1.2rem; padding-top:2.5rem; } .ra-hero-copy { max-width:none; } .ra-hero-slip { padding:1.5rem .5rem 2rem; } .ra-slip { width:min(100%,420px); } .ra-steps ol { grid-template-columns:1fr; gap:1.2rem; padding-top:1.4rem; } .ra-steps li { display:grid; grid-template-columns:2.5rem 1fr; column-gap:.6rem; } .ra-step-n { grid-row:span 2; padding-top:.15rem; } .ra-steps h3 { margin:.1rem 0 .35rem; } .ra-steps li p { grid-column:2; } .ra-footer>span { margin-left:0; text-align:left; } }
+@media (prefers-reduced-motion:reduce) { .ra-intro,.ra-intro-mark { animation:none; } .ra-btn,.ra-chip { transition:none; } }
