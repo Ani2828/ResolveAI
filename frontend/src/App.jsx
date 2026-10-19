@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase, supabaseConfigured } from "./lib/supabase.js";
+import LandingPage from "./LandingPage.jsx";
 
 
 
@@ -43,6 +44,7 @@ function App() {
   const [authNotice, setAuthNotice] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [isGuest, setIsGuest] = useState(false);
+  const [showLanding, setShowLanding] = useState(true);
   const [profileDraft, setProfileDraft] = useState({ name: "", phone: "" });
   const [profileNotice, setProfileNotice] = useState(null);
   const accountId = authSession?.user?.id || "";
@@ -2563,6 +2565,15 @@ function App() {
         : "Ready to help";
 
 
+
+  if (showLanding) {
+    return <LandingPage
+      name={userProfile?.name || ""}
+      email={authSession?.user?.email || ""}
+      isGuest={isGuest}
+      onStart={(example) => { setInput(example); setShowLanding(false); }}
+    />;
+  }
 
   return (
     <>
