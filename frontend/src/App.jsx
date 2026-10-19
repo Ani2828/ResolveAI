@@ -43,6 +43,8 @@ function App() {
   const [authNotice, setAuthNotice] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [isGuest, setIsGuest] = useState(false);
+  const [profileDraft, setProfileDraft] = useState({ name: "", phone: "" });
+  const [profileNotice, setProfileNotice] = useState(null);
   const accountId = authSession?.user?.id || "";
   const previousAccountId = useRef(null);
   const accountGeneration = useRef(0);
@@ -141,6 +143,7 @@ function App() {
   }
 
   async function apiFetch(path, options = {}) {
+    if (!supabase) throw new Error("Sign in to use this feature.");
     const { data } = await supabase.auth.getSession();
     const accessToken = data?.session?.access_token;
     if (!accessToken || data.session.user.id !== accountId) throw new Error("Your session expired. Sign in again to continue.");
@@ -672,7 +675,7 @@ function App() {
 
 
   async function loadSwiggyOrders(addressId = swiggyAddressId, analysisData = analysis) {
-    if (!addressId) return;
+    if (isGuest || !addressId) return;
 
     setSwiggyLoading(true);
     setSwiggyError("");
@@ -1081,6 +1084,8 @@ function App() {
 
   async function disconnectSwiggy() {
 
+    if (isGuest) return;
+
     setSwiggyLoading(true);
 
     try {
@@ -1121,7 +1126,53 @@ function App() {
 
 
   function openSettingsPage() {
+    setProfileDraft({ name: userProfile.name || "", phone: userProfile.phone || "" });
+    setProfileNotice(null);
     setShowSettings(true);
+  }
+
+  function saveProfile(event) {
+    event?.preventDefault();
+    const name = profileDraft.name.trim().replace(/\s+/g, " ");
+    const phone = profileDraft.phone.trim();
+    const phoneDigits = phone.replace(/\D/g, "");
+    if (name.length > 60) {
+      setProfileNotice({ type: "error", text: "Name must be 60 characters or fewer." });
+      return;
+    }
+    if (phone && (!/^[+\d\s\-()]+$/.test(phone) || phoneDigits.length < 7 || phoneDigits.length > 15)) {
+      setProfileNotice({ type: "error", text: "Enter a valid phone number (7–15 digits), or leave it blank." });
+      return;
+    }
+    const updated = { ...userProfile, name, phone };
+    setUserProfile(updated);
+    if (accountId) {
+      try {
+        localStorage.setItem(`resolveai_profile:${accountId}`, JSON.stringify(updated));
+        setProfileNotice({ type: "success", text: "Profile saved." });
+      } catch {
+        setProfileNotice({ type: "error", text: "Could not save your profile in this browser." });
+      }
+    } else {
+      setProfileNotice({ type: "success", text: "Updated for this guest session only. Sign in to keep your profile." });
+    }
+  }
+
+  function exitGuest() {
+    setIsGuest(false);
+    setShowSettings(false);
+    setMessages(initialMessages);
+    setAnalysis(null);
+    setProblemHistory([]);
+    setUserProfile({ name: "", email: "", phone: "" });
+  }
+
+  async function handleSignOut() {
+    if (isGuest || !supabase) {
+      exitGuest();
+      return;
+    }
+    await supabase.auth.signOut();
   }
 
   function closeSidebarPanel() {
@@ -2179,6 +2230,10 @@ function App() {
 
   }
   async function speakSupportRequest(type) {
+    if (isGuest) {
+      setVoiceError("Read-aloud needs a signed-in session in this demo.");
+      return;
+    }
     const order =
       matchedSwiggyOrder ||
       selectedSwiggyOrderDetails ||
@@ -2530,7 +2585,7 @@ function App() {
     ) : (
     
     <div className="resolveai-app min-h-screen bg-base-200/80 text-base-content">
-      {isGuest && <div className="alert alert-info mx-auto mt-3 max-w-5xl" role="status"><span><strong>Guest demo:</strong> sample guidance only. Real order lookup, account history, and Swiggy actions require sign-in.</span><button type="button" className="btn btn-sm btn-outline" onClick={() => { setIsGuest(false); setMessages(initialMessages); setAnalysis(null); setProblemHistory([]); }}>Exit guest mode</button></div>}
+      {isGuest && <div className="alert alert-info mx-auto mt-3 max-w-5xl" role="status"><span><strong>Guest demo:</strong> sample guidance only. Real order lookup, account history, and Swiggy actions require sign-in.</span><button type="button" className="btn btn-sm btn-outline" onClick={exitGuest}>Exit guest mode</button></div>}
 
       <div className="drawer lg:drawer-open">
 
@@ -2630,17 +2685,17 @@ function App() {
 
             <div className="navbar-end gap-2">
 
-              <button className="btn btn-ghost btn-sm" onClick={() => void supabase.auth.signOut()}>Sign out</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => void handleSignOut()}>{isGuest ? "Exit guest" : "Sign out"}</button>
 
-              <div className="avatar avatar-placeholder">
+              <button type="button" className="avatar avatar-placeholder cursor-pointer rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={openSettingsPage} aria-label="Open profile and settings" title="Profile & settings">
 
                 <div className="w-9 rounded-full bg-primary text-primary-content">
 
-                  <span className="text-xs font-bold">{(userProfile.name || "RA").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span>
+                  <span className="text-xs font-bold">{(userProfile.name || "RA").split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span>
 
                 </div>
 
-              </div>
+              </button>
 
             </div>
 
@@ -4228,39 +4283,58 @@ function App() {
             👤 Profile
           </h3>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <form className="grid gap-3 sm:grid-cols-3" onSubmit={saveProfile} noValidate>
 
-            <div className="rounded-2xl bg-base-200 p-4">
-              <div className="text-xs text-base-content/50">
-                Name
-              </div>
+            <label className="rounded-2xl bg-base-200 p-4">
+              <span className="text-xs text-base-content/50">Name</span>
+              <input
+                type="text"
+                name="name"
+                autoComplete="name"
+                maxLength={60}
+                className="input input-bordered input-sm mt-1 w-full"
+                placeholder="Your name"
+                value={profileDraft.name}
+                onChange={(event) => setProfileDraft((current) => ({ ...current, name: event.target.value }))}
+              />
+            </label>
 
-              <div className="font-semibold">
-                {userProfile.name || "Not added"}
-              </div>
+            <label className="rounded-2xl bg-base-200 p-4">
+              <span className="text-xs text-base-content/50">Email (from your sign-in)</span>
+              <input
+                type="email"
+                name="email"
+                readOnly
+                className="input input-bordered input-sm mt-1 w-full opacity-70"
+                value={userProfile.email || ""}
+                placeholder="Not signed in"
+              />
+            </label>
+
+            <label className="rounded-2xl bg-base-200 p-4">
+              <span className="text-xs text-base-content/50">Phone</span>
+              <input
+                type="tel"
+                name="phone"
+                autoComplete="tel"
+                inputMode="tel"
+                className="input input-bordered input-sm mt-1 w-full"
+                placeholder="+91 98765 43210"
+                value={profileDraft.phone}
+                onChange={(event) => setProfileDraft((current) => ({ ...current, phone: event.target.value }))}
+              />
+            </label>
+
+            <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
+              <button type="submit" className="btn btn-primary btn-sm">Save profile</button>
+              {profileNotice && (
+                <span role="status" className={`text-sm ${profileNotice.type === "error" ? "text-error" : "text-success"}`}>
+                  {profileNotice.text}
+                </span>
+              )}
             </div>
 
-            <div className="rounded-2xl bg-base-200 p-4">
-              <div className="text-xs text-base-content/50">
-                Email
-              </div>
-
-              <div className="break-all font-semibold">
-                {userProfile.email || "Not added"}
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-base-200 p-4">
-              <div className="text-xs text-base-content/50">
-                Phone
-              </div>
-
-              <div className="font-semibold">
-                {userProfile.phone || "Not added"}
-              </div>
-            </div>
-
-          </div>
+          </form>
         </section>
 
         {/* Themes */}
